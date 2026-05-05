@@ -40,3 +40,27 @@ export function utilityCost(property, utility) {
   if (utility === "cooling") return Number(property.cooling_cost_eur_per_kwh || 0);
   return Number(property.elec_cost_eur_per_kwh || 0);
 }
+
+export const EQUIPMENT_TYPE_TO_BRICK_CLASS = {
+  "Air Handling Unit": "brick:AHU",
+  "Fan Coil Unit": "brick:Fan_Coil_Unit",
+  Chiller: "brick:Chiller",
+  Boiler: "brick:Boiler",
+  "Heat Pump": "brick:Heat_Pump",
+  Pump: "brick:Pump",
+  Fan: "brick:Fan",
+  "Cooling Tower": "brick:Cooling_Tower",
+  "Heat Exchanger": "brick:Heat_Exchanger",
+  "Variable Air Volume Box": "brick:VAV",
+  Meter: "brick:Meter",
+  "Electric Meter": "brick:Electrical_Meter",
+  "Thermal Meter": "brick:Thermal_Meter",
+  "Gas Meter": "brick:Gas_Meter",
+  "Water Meter": "brick:Water_Meter",
+  "Lighting System": "brick:Lighting_System",
+  "BMS / Controls": "brick:BMS",
+  Sensor: "brick:Sensor",
+  Valve: "brick:Valve",
+  Damper: "brick:Damper",
+  Other: ""
+};

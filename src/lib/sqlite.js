@@ -54,7 +54,9 @@ export function getPortfolio(db) {
   const ecms = getEcms(db);
   const implementedSavings = rows(db, "SELECT * FROM ecm_measured_savings");
   const monthlyUsage = rows(db, "SELECT * FROM monthly_utility_usage");
-  return { properties, ecms, implementedSavings, monthlyUsage };
+  const tenants = getTenants(db);
+  const equipment = getEquipment(db);
+  return { properties, ecms, implementedSavings, monthlyUsage, tenants, equipment };
 }
 
 export function getProperties(db) {
@@ -116,6 +118,135 @@ export function getImplementedSavings(db, propertyId = null) {
   );
 }
 
+export function getProperty(db, id) {
+  return one(db, "SELECT * FROM properties WHERE id = ?", [id]);
+}
+
+export function upsertProperty(db, input) {
+  if (input.id) {
+    db.run(
+      `UPDATE properties
+       SET name=?, address=?, total_floor_area=?, elec_cost_eur_per_kwh=?,
+           heating_cost_eur_per_kwh=?, cooling_cost_eur_per_kwh=?, notes=?,
+           updated_at=CURRENT_TIMESTAMP
+       WHERE id=?`,
+      [
+        input.name,
+        input.address || "",
+        nullable(input.total_floor_area),
+        Number(input.elec_cost_eur_per_kwh || 0),
+        Number(input.heating_cost_eur_per_kwh || 0),
+        Number(input.cooling_cost_eur_per_kwh || 0),
+        input.notes || "",
+        input.id
+      ]
+    );
+    return input.id;
+  }
+  db.run(
+    `INSERT INTO properties (
+      name, address, total_floor_area, elec_cost_eur_per_kwh,
+      heating_cost_eur_per_kwh, cooling_cost_eur_per_kwh, notes, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [
+      input.name,
+      input.address || "",
+      nullable(input.total_floor_area),
+      Number(input.elec_cost_eur_per_kwh || 0),
+      Number(input.heating_cost_eur_per_kwh || 0),
+      Number(input.cooling_cost_eur_per_kwh || 0),
+      input.notes || ""
+    ]
+  );
+  return Number(one(db, "SELECT last_insert_rowid() AS id").id);
+}
+
+export function deleteProperty(db, id) {
+  db.run("DELETE FROM properties WHERE id = ?", [id]);
+}
+
+export function upsertTenant(db, input) {
+  if (input.id) {
+    db.run(
+      `UPDATE tenants
+       SET property_id=?, tenant_name=?, tenant_location_id=?, tenant_floor_area=?,
+           location_label=?, notes=?, updated_at=CURRENT_TIMESTAMP
+       WHERE id=?`,
+      [
+        input.property_id,
+        input.tenant_name,
+        input.tenant_location_id || "",
+        nullable(input.tenant_floor_area),
+        input.location_label || "",
+        input.notes || "",
+        input.id
+      ]
+    );
+    return input.id;
+  }
+  db.run(
+    `INSERT INTO tenants (
+      property_id, tenant_name, tenant_location_id, tenant_floor_area,
+      location_label, notes, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [
+      input.property_id,
+      input.tenant_name,
+      input.tenant_location_id || "",
+      nullable(input.tenant_floor_area),
+      input.location_label || "",
+      input.notes || ""
+    ]
+  );
+  return Number(one(db, "SELECT last_insert_rowid() AS id").id);
+}
+
+export function deleteTenant(db, id) {
+  db.run("DELETE FROM tenants WHERE id = ?", [id]);
+}
+
+export function upsertEquipment(db, input) {
+  if (input.id) {
+    db.run(
+      `UPDATE equipment
+       SET property_id=?, tenant_id=?, equipment_name=?, equipment_type=?, brick_class=?,
+           utility_type=?, notes=?, updated_at=CURRENT_TIMESTAMP
+       WHERE id=?`,
+      [
+        input.property_id,
+        input.tenant_id || null,
+        input.equipment_name,
+        input.equipment_type || "",
+        input.brick_class || "",
+        input.utility_type || "",
+        input.notes || "",
+        input.id
+      ]
+    );
+    return input.id;
+  }
+  db.run(
+    `INSERT INTO equipment (
+      property_id, tenant_id, equipment_name, equipment_type, brick_class,
+      utility_type, notes, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [
+      input.property_id,
+      input.tenant_id || null,
+      input.equipment_name,
+      input.equipment_type || "",
+      input.brick_class || "",
+      input.utility_type || "",
+      input.notes || ""
+    ]
+  );
+  return Number(one(db, "SELECT last_insert_rowid() AS id").id);
+}
+
+export function deleteEquipment(db, id) {
+  db.run("DELETE FROM equipment WHERE id = ?", [id]);
+}
+
 export function getMonthlyUsage(db, propertyId = null) {
   return rows(
     db,
@@ -127,6 +258,48 @@ export function getMonthlyUsage(db, propertyId = null) {
      ORDER BY u.usage_month DESC, p.name`,
     propertyId ? [propertyId] : []
   );
+}
+
+export function upsertMonthlyUsage(db, input) {
+  const existing = one(
+    db,
+    `SELECT id FROM monthly_utility_usage
+     WHERE property_id=? AND COALESCE(tenant_id, 0)=COALESCE(?, 0)
+       AND scope_type=? AND usage_month=?`,
+    [input.property_id, input.tenant_id || null, input.scope_type || "building", input.usage_month]
+  );
+  const params = [
+    input.property_id,
+    input.tenant_id || null,
+    input.scope_type || "building",
+    input.usage_month,
+    Number(input.electricity_kwh || 0),
+    Number(input.heating_kwh || 0),
+    Number(input.cooling_kwh || 0),
+    input.notes || ""
+  ];
+  if (existing) {
+    db.run(
+      `UPDATE monthly_utility_usage
+       SET property_id=?, tenant_id=?, scope_type=?, usage_month=?, electricity_kwh=?,
+           heating_kwh=?, cooling_kwh=?, notes=?, updated_at=CURRENT_TIMESTAMP
+       WHERE id=?`,
+      [...params, existing.id]
+    );
+    return existing.id;
+  }
+  db.run(
+    `INSERT INTO monthly_utility_usage (
+      property_id, tenant_id, scope_type, usage_month, electricity_kwh,
+      heating_kwh, cooling_kwh, notes, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    params
+  );
+  return Number(one(db, "SELECT last_insert_rowid() AS id").id);
+}
+
+export function deleteMonthlyUsage(db, id) {
+  db.run("DELETE FROM monthly_utility_usage WHERE id = ?", [id]);
 }
 
 export function tableCount(db, table) {
@@ -258,6 +431,15 @@ export function setSavingObsidianFilename(db, id, filename) {
 export function runSelect(db, sql) {
   if (!/^\s*select\b/i.test(sql)) throw new Error("Only SELECT queries are allowed.");
   return rows(db, sql);
+}
+
+export function databaseHealth(db) {
+  return {
+    integrity: rows(db, "PRAGMA integrity_check"),
+    foreignKeys: rows(db, "PRAGMA foreign_key_check"),
+    tables: rows(db, "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+      .map((item) => ({ table: item.name, rows: tableCount(db, item.name) }))
+  };
 }
 
 function nullable(value) {

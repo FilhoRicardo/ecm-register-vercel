@@ -1,12 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  databaseHealth,
   deleteEcm,
+  deleteEquipment,
+  deleteMonthlyUsage,
+  deleteProperty,
+  deleteTenant,
   getAttachments,
   getEcms,
+  getEquipment,
   getImplementedSavings,
   getMonthlyUsage,
   getPortfolio,
   getProperties,
+  getTenants,
   insertAttachment,
   openDatabaseFromFile,
   openDatabaseFromHandle,
@@ -16,13 +23,17 @@ import {
   setSavingObsidianFilename,
   tableCount,
   upsertEcm,
-  upsertImplementedSaving
+  upsertEquipment,
+  upsertImplementedSaving,
+  upsertMonthlyUsage,
+  upsertProperty,
+  upsertTenant
 } from "./lib/sqlite.js";
-import { ensurePermission, idbGet, idbSet, supportsFileSystemAccess, writeFile } from "./lib/storage.js";
+import { downloadBlob, ensurePermission, idbGet, idbSet, supportsFileSystemAccess, writeFile } from "./lib/storage.js";
 import { listMarkdownFiles, routeCalculationFile, writeTextIntoFolder } from "./lib/files.js";
 import { buildEcmMarkdown, buildMeetingMarkdown, buildSavingMarkdown, ecmFilename, meetingFilename, savingFilename } from "./lib/markdown.js";
-import { downloadExcelRegister, downloadWordRegister } from "./lib/reports.js";
-import { kwh, money, slug, todayIso, utilityCost } from "./lib/format.js";
+import { downloadExcelRegister, downloadPdfRegister, downloadWordRegister } from "./lib/reports.js";
+import { EQUIPMENT_TYPE_TO_BRICK_CLASS, kwh, money, slug, todayIso, utilityCost } from "./lib/format.js";
 
 const FOLDERS = [
   { key: "database", label: "Database Folder", required: true },
@@ -37,11 +48,15 @@ const FOLDERS = [
 const NAV = [
   ["setup", "Setup"],
   ["dashboard", "Dashboard"],
+  ["properties", "Properties"],
+  ["tenants", "Tenants & Equipment"],
   ["ecms", "ECMs"],
   ["savings", "Implemented Savings"],
+  ["usage", "Monthly Usage"],
   ["meetings", "Monthly Meetings"],
   ["reports", "Reports"],
-  ["database", "Database"]
+  ["database", "SQLite Lab"],
+  ["admin", "Database Admin"]
 ];
 
 const EMPTY_ECM = {
@@ -59,6 +74,34 @@ const EMPTY_ECM = {
   notes: ""
 };
 
+const EMPTY_PROPERTY = {
+  name: "",
+  address: "",
+  total_floor_area: "",
+  elec_cost_eur_per_kwh: "0.12",
+  heating_cost_eur_per_kwh: "0.09",
+  cooling_cost_eur_per_kwh: "0.12",
+  notes: ""
+};
+
+const EMPTY_TENANT = {
+  property_id: "",
+  tenant_name: "",
+  tenant_floor_area: "",
+  location_label: "",
+  notes: ""
+};
+
+const EMPTY_EQUIPMENT = {
+  property_id: "",
+  tenant_id: "",
+  equipment_name: "",
+  equipment_type: "Air Handling Unit",
+  brick_class: "brick:AHU",
+  utility_type: "electricity",
+  notes: ""
+};
+
 export default function App() {
   const [active, setActive] = useState("setup");
   const [handles, setHandles] = useState({});
@@ -67,9 +110,13 @@ export default function App() {
   const [data, setData] = useState(null);
   const [selectedPropertyId, setSelectedPropertyId] = useState("");
   const [selectedEcmId, setSelectedEcmId] = useState("");
+  const [propertyForm, setPropertyForm] = useState(EMPTY_PROPERTY);
+  const [tenantForm, setTenantForm] = useState(EMPTY_TENANT);
+  const [equipmentForm, setEquipmentForm] = useState(EMPTY_EQUIPMENT);
   const [ecmForm, setEcmForm] = useState(EMPTY_ECM);
   const [calcFile, setCalcFile] = useState(null);
   const [savingForm, setSavingForm] = useState(defaultSavingForm());
+  const [usageForm, setUsageForm] = useState(defaultUsageForm());
   const [meetingForm, setMeetingForm] = useState({ property_id: "", report_month: todayIso().slice(0, 7), meeting_date: todayIso(), pre: "", post: "" });
   const [meetingFiles, setMeetingFiles] = useState([]);
   const [selectedMeetingName, setSelectedMeetingName] = useState("");
@@ -96,6 +143,9 @@ export default function App() {
     setSelectedPropertyId((prev) => prev || first);
     setMeetingForm((prev) => ({ ...prev, property_id: prev.property_id || first }));
     setEcmForm((prev) => ({ ...prev, property_id: prev.property_id || first }));
+    setTenantForm((prev) => ({ ...prev, property_id: prev.property_id || first }));
+    setEquipmentForm((prev) => ({ ...prev, property_id: prev.property_id || first }));
+    setUsageForm((prev) => ({ ...prev, property_id: prev.property_id || first }));
   }, [data?.properties]);
 
   const properties = data?.properties || [];
@@ -180,6 +230,9 @@ export default function App() {
       setSelectedPropertyId(nextData.properties[0]?.id ? String(nextData.properties[0].id) : "");
       setEcmForm((prev) => ({ ...prev, property_id: nextData.properties[0]?.id ? String(nextData.properties[0].id) : "" }));
       setMeetingForm((prev) => ({ ...prev, property_id: nextData.properties[0]?.id ? String(nextData.properties[0].id) : "" }));
+      setTenantForm((prev) => ({ ...prev, property_id: nextData.properties[0]?.id ? String(nextData.properties[0].id) : "" }));
+      setEquipmentForm((prev) => ({ ...prev, property_id: nextData.properties[0]?.id ? String(nextData.properties[0].id) : "" }));
+      setUsageForm((prev) => ({ ...prev, property_id: nextData.properties[0]?.id ? String(nextData.properties[0].id) : "" }));
       setActive("dashboard");
       notify(`Database imported: ${nextData.properties.length} properties, ${nextData.ecms.length} ECMs.`);
     } catch (error) {
@@ -195,6 +248,115 @@ export default function App() {
     await saveDatabase(db, dbFileHandle);
     setData(getPortfolio(db));
     notify(message);
+  }
+
+  async function saveProperty(event) {
+    event.preventDefault();
+    const id = upsertProperty(db, { ...propertyForm, id: propertyForm.id || null });
+    setPropertyForm(EMPTY_PROPERTY);
+    setSelectedPropertyId(String(id));
+    await persist("Property saved.");
+  }
+
+  async function removeProperty(id) {
+    if (!window.confirm("Delete this property and all linked tenants, equipment, ECMs and usage records?")) return;
+    deleteProperty(db, id);
+    setPropertyForm(EMPTY_PROPERTY);
+    await persist("Property deleted.");
+  }
+
+  async function saveTenant(event) {
+    event.preventDefault();
+    upsertTenant(db, { ...tenantForm, id: tenantForm.id || null, property_id: Number(tenantForm.property_id) });
+    setTenantForm({ ...EMPTY_TENANT, property_id: selectedPropertyId || tenantForm.property_id });
+    await persist("Tenant saved.");
+  }
+
+  async function removeTenant(id) {
+    if (!window.confirm("Delete this tenant/location record?")) return;
+    deleteTenant(db, id);
+    setTenantForm({ ...EMPTY_TENANT, property_id: selectedPropertyId });
+    await persist("Tenant deleted.");
+  }
+
+  async function saveEquipment(event) {
+    event.preventDefault();
+    upsertEquipment(db, {
+      ...equipmentForm,
+      id: equipmentForm.id || null,
+      property_id: Number(equipmentForm.property_id),
+      tenant_id: equipmentForm.tenant_id ? Number(equipmentForm.tenant_id) : null
+    });
+    setEquipmentForm({ ...EMPTY_EQUIPMENT, property_id: selectedPropertyId || equipmentForm.property_id });
+    await persist("Equipment saved.");
+  }
+
+  async function removeEquipment(id) {
+    if (!window.confirm("Delete this equipment record?")) return;
+    deleteEquipment(db, id);
+    setEquipmentForm({ ...EMPTY_EQUIPMENT, property_id: selectedPropertyId });
+    await persist("Equipment deleted.");
+  }
+
+  async function saveUsage(event) {
+    event.preventDefault();
+    upsertMonthlyUsage(db, {
+      ...usageForm,
+      id: usageForm.id || null,
+      property_id: Number(usageForm.property_id),
+      tenant_id: usageForm.scope_type === "tenant" && usageForm.tenant_id ? Number(usageForm.tenant_id) : null
+    });
+    setUsageForm({ ...defaultUsageForm(), property_id: selectedPropertyId || usageForm.property_id });
+    await persist("Monthly usage saved.");
+  }
+
+  async function removeUsage(id) {
+    if (!window.confirm("Delete this monthly usage record?")) return;
+    deleteMonthlyUsage(db, id);
+    await persist("Monthly usage deleted.");
+  }
+
+  async function syncObsidianNotes() {
+    if (!handles.ecmNotes || !handles.savingNotes) {
+      notify("Configure ECM Notes and Implemented Savings Notes folders first.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const propertiesNow = getProperties(db);
+      const ecmsNow = getEcms(db);
+      for (const ecm of ecmsNow) {
+        const property = propertiesNow.find((item) => item.id === ecm.property_id);
+        const attachments = getAttachments(db, ecm.id);
+        const filename = ecm.obsidian_filename || ecmFilename(ecm);
+        await writeTextIntoFolder(handles.ecmNotes, filename, buildEcmMarkdown(ecm, property, attachments));
+        setEcmObsidianFilename(db, ecm.id, filename);
+      }
+      const savingsNow = getImplementedSavings(db);
+      for (const saving of savingsNow) {
+        const ecm = ecmsNow.find((item) => item.id === saving.ecm_id);
+        const property = propertiesNow.find((item) => item.id === saving.property_id);
+        const filename = saving.obsidian_filename || savingFilename({ ...saving, ...ecm });
+        await writeTextIntoFolder(handles.savingNotes, filename, buildSavingMarkdown(saving, ecm, property));
+        setSavingObsidianFilename(db, saving.id, filename);
+      }
+      await persist(`Synced ${ecmsNow.length} ECM notes and ${savingsNow.length} implemented-savings notes to Obsidian.`);
+    } catch (error) {
+      notify(error.message || String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createDatabaseBackup() {
+    const filename = `ecm_register_backup_${new Date().toISOString().replace(/[:.]/g, "-")}.db`;
+    const handle = await handles.database.getFileHandle(filename, { create: true });
+    await saveDatabase(db, handle);
+    notify(`Backup created: ${filename}`);
+  }
+
+  function downloadDatabaseFile() {
+    downloadBlob(new Blob([db.export()], { type: "application/octet-stream" }), "ecm_register.db");
   }
 
   async function saveEcm(event) {
@@ -372,6 +534,34 @@ export default function App() {
           />
         )}
         {active === "dashboard" && <DashboardView data={data} ready={ready} />}
+        {active === "properties" && (
+          <PropertiesView
+            ready={ready}
+            properties={properties}
+            form={propertyForm}
+            setForm={setPropertyForm}
+            save={saveProperty}
+            remove={removeProperty}
+          />
+        )}
+        {active === "tenants" && (
+          <TenantsEquipmentView
+            ready={ready}
+            properties={properties}
+            selectedPropertyId={selectedPropertyId}
+            setSelectedPropertyId={setSelectedPropertyId}
+            tenants={data?.tenants || []}
+            equipment={data?.equipment || []}
+            tenantForm={tenantForm}
+            setTenantForm={setTenantForm}
+            equipmentForm={equipmentForm}
+            setEquipmentForm={setEquipmentForm}
+            saveTenant={saveTenant}
+            removeTenant={removeTenant}
+            saveEquipment={saveEquipment}
+            removeEquipment={removeEquipment}
+          />
+        )}
         {active === "ecms" && (
           <EcmView
             ready={ready}
@@ -402,6 +592,18 @@ export default function App() {
             busy={busy}
           />
         )}
+        {active === "usage" && (
+          <MonthlyUsageView
+            ready={ready}
+            properties={properties}
+            tenants={data?.tenants || []}
+            usage={data?.monthlyUsage || []}
+            form={usageForm}
+            setForm={setUsageForm}
+            save={saveUsage}
+            remove={removeUsage}
+          />
+        )}
         {active === "meetings" && (
           <MeetingsView
             ready={ready}
@@ -420,6 +622,17 @@ export default function App() {
         )}
         {active === "reports" && <ReportsView ready={ready} db={db} properties={properties} selectedProperty={selectedProperty} setSelectedPropertyId={setSelectedPropertyId} />}
         {active === "database" && <DatabaseView ready={ready} db={db} sqlText={sqlText} setSqlText={setSqlText} runSql={runSql} sqlRows={sqlRows} />}
+        {active === "admin" && (
+          <DatabaseAdminView
+            ready={ready}
+            db={db}
+            data={data}
+            syncObsidianNotes={syncObsidianNotes}
+            createDatabaseBackup={createDatabaseBackup}
+            downloadDatabaseFile={downloadDatabaseFile}
+            busy={busy}
+          />
+        )}
       </main>
     </div>
   );
@@ -476,18 +689,146 @@ function DashboardView({ data, ready }) {
   const ecms = data.ecms || [];
   const open = ecms.filter((item) => item.status === "Open");
   const implemented = ecms.filter((item) => item.status === "Implemented");
+  const openSaving = open.reduce((sum, item) => sum + Number(item.annual_saving_eur || 0), 0);
+  const implementedSaving = implemented.reduce((sum, item) => sum + Number(item.annual_saving_eur || 0), 0);
+  const totalEnergy = ecms.reduce((sum, item) => sum + Number(item.energy_saving_kwh || 0), 0);
   return (
     <section className="section">
       <h3>Dashboard</h3>
       <div className="grid four">
         <Kpi label="Properties" value={data.properties.length} />
+        <Kpi label="Tenants" value={(data.tenants || []).length} />
+        <Kpi label="Equipment" value={(data.equipment || []).length} />
         <Kpi label="ECMs" value={ecms.length} />
+      </div>
+      <div className="grid four" style={{ marginTop: 14 }}>
         <Kpi label="Open ECMs" value={open.length} />
         <Kpi label="Implemented" value={implemented.length} />
+        <Kpi label="Open savings" value={`€${money(openSaving)}/a`} />
+        <Kpi label="Implemented savings" value={`€${money(implementedSaving)}/a`} />
       </div>
       <div className="grid two" style={{ marginTop: 14 }}>
-        <Kpi label="Open annual saving EUR/a" value={money(open.reduce((sum, item) => sum + Number(item.annual_saving_eur || 0), 0))} />
-        <Kpi label="Implemented annual saving EUR/a" value={money(implemented.reduce((sum, item) => sum + Number(item.annual_saving_eur || 0), 0))} />
+        <Kpi label="Total energy saving" value={`${kwh(totalEnergy)} kWh/a`} />
+        <Kpi label="Monthly usage records" value={(data.monthlyUsage || []).length} />
+      </div>
+      <div className="grid two" style={{ marginTop: 14 }}>
+        <SummaryTable title="ECM Status" rows={countRows(ecms, "status")} />
+        <SummaryTable title="Utility Impacted" rows={countRows(ecms, "utility_type")} />
+      </div>
+    </section>
+  );
+}
+
+function PropertiesView({ ready, properties, form, setForm, save, remove }) {
+  if (!ready) return <EmptyState />;
+  const set = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
+  return (
+    <section className="section">
+      <h3>Properties</h3>
+      <div className="grid two">
+        <div className="card">
+          <form onSubmit={save}>
+            <Field label="Name"><input value={form.name} onChange={(e) => set("name", e.target.value)} required /></Field>
+            <Field label="Address"><input value={form.address} onChange={(e) => set("address", e.target.value)} /></Field>
+            <div className="grid two">
+              <Field label="Total floor area m²"><input type="number" step="0.01" value={form.total_floor_area} onChange={(e) => set("total_floor_area", e.target.value)} /></Field>
+              <Field label="Electricity cost EUR/kWh"><input type="number" step="0.0001" value={form.elec_cost_eur_per_kwh} onChange={(e) => set("elec_cost_eur_per_kwh", e.target.value)} /></Field>
+              <Field label="Heating cost EUR/kWh"><input type="number" step="0.0001" value={form.heating_cost_eur_per_kwh} onChange={(e) => set("heating_cost_eur_per_kwh", e.target.value)} /></Field>
+              <Field label="Cooling cost EUR/kWh"><input type="number" step="0.0001" value={form.cooling_cost_eur_per_kwh} onChange={(e) => set("cooling_cost_eur_per_kwh", e.target.value)} /></Field>
+            </div>
+            <Field label="Notes"><textarea value={form.notes} onChange={(e) => set("notes", e.target.value)} /></Field>
+            <div className="toolbar">
+              <button className="btn primary">Save Property</button>
+              <button className="btn" type="button" onClick={() => setForm(EMPTY_PROPERTY)}>New Property</button>
+            </div>
+          </form>
+        </div>
+        <div className="card" style={{ overflow: "auto", maxHeight: 680 }}>
+          <table>
+            <thead><tr><th>Name</th><th>Area</th><th>Costs</th><th></th></tr></thead>
+            <tbody>
+              {properties.map((property) => (
+                <tr key={property.id}>
+                  <td onClick={() => setForm({ ...property, total_floor_area: property.total_floor_area ?? "" })} style={{ cursor: "pointer" }}>
+                    <strong>{property.name}</strong><br /><span className="muted">{property.address}</span>
+                  </td>
+                  <td>{money(property.total_floor_area)} m²</td>
+                  <td>Elec €{money(property.elec_cost_eur_per_kwh)} / Heat €{money(property.heating_cost_eur_per_kwh)} / Cool €{money(property.cooling_cost_eur_per_kwh)}</td>
+                  <td><button className="btn danger" type="button" onClick={() => remove(property.id)}>Remove</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function TenantsEquipmentView(props) {
+  const { ready, properties, selectedPropertyId, setSelectedPropertyId, tenants, equipment, tenantForm, setTenantForm, equipmentForm, setEquipmentForm, saveTenant, removeTenant, saveEquipment, removeEquipment } = props;
+  if (!ready) return <EmptyState />;
+  const scopedTenants = tenants.filter((tenant) => tenant.property_id === Number(selectedPropertyId));
+  const scopedEquipment = equipment.filter((item) => item.property_id === Number(selectedPropertyId));
+  const setTenant = (key, value) => setTenantForm((prev) => ({ ...prev, [key]: value }));
+  const setEquip = (key, value) => setEquipmentForm((prev) => ({ ...prev, [key]: value }));
+  return (
+    <section className="section">
+      <h3>Tenants & Equipment</h3>
+      <div className="toolbar">
+        <select className="input" value={selectedPropertyId} onChange={(e) => {
+          setSelectedPropertyId(e.target.value);
+          setTenantForm({ ...EMPTY_TENANT, property_id: e.target.value });
+          setEquipmentForm({ ...EMPTY_EQUIPMENT, property_id: e.target.value });
+        }} style={{ maxWidth: 420 }}>
+          {properties.map((property) => <option key={property.id} value={property.id}>{property.name}</option>)}
+        </select>
+      </div>
+      <div className="grid two">
+        <div className="card">
+          <h3>Tenants</h3>
+          <form onSubmit={saveTenant}>
+            <Field label="Tenant name"><input value={tenantForm.tenant_name} onChange={(e) => setTenant("tenant_name", e.target.value)} required /></Field>
+            <div className="grid two">
+              <Field label="Location label"><input value={tenantForm.location_label} onChange={(e) => setTenant("location_label", e.target.value)} /></Field>
+              <Field label="Tenant floor area m²"><input type="number" step="0.01" value={tenantForm.tenant_floor_area} onChange={(e) => setTenant("tenant_floor_area", e.target.value)} /></Field>
+            </div>
+            <Field label="Notes / sublocations"><textarea value={tenantForm.notes} onChange={(e) => setTenant("notes", e.target.value)} /></Field>
+            <div className="toolbar">
+              <button className="btn primary">Save Tenant</button>
+              <button className="btn" type="button" onClick={() => setTenantForm({ ...EMPTY_TENANT, property_id: selectedPropertyId })}>New Tenant</button>
+            </div>
+          </form>
+          <CompactTable rows={scopedTenants} columns={[
+            ["tenant_name", "Tenant"],
+            ["location_label", "Location"],
+            ["tenant_floor_area", "Area m²"]
+          ]} onEdit={(row) => setTenantForm({ ...row, property_id: String(row.property_id), tenant_floor_area: row.tenant_floor_area ?? "" })} onRemove={removeTenant} />
+        </div>
+        <div className="card">
+          <h3>Equipment</h3>
+          <form onSubmit={saveEquipment}>
+            <Field label="Equipment name"><input value={equipmentForm.equipment_name} onChange={(e) => setEquip("equipment_name", e.target.value)} required /></Field>
+            <div className="grid two">
+              <Field label="Tenant scope"><select value={equipmentForm.tenant_id} onChange={(e) => setEquip("tenant_id", e.target.value)}><option value="">Whole property</option>{scopedTenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.tenant_name} - {tenant.location_label}</option>)}</select></Field>
+              <Field label="Utility"><select value={equipmentForm.utility_type} onChange={(e) => setEquip("utility_type", e.target.value)}>{["electricity", "heating", "cooling", ""].map((s) => <option key={s} value={s}>{s || "not stated"}</option>)}</select></Field>
+            </div>
+            <div className="grid two">
+              <Field label="Equipment type"><select value={equipmentForm.equipment_type} onChange={(e) => setEquipmentForm((prev) => ({ ...prev, equipment_type: e.target.value, brick_class: EQUIPMENT_TYPE_TO_BRICK_CLASS[e.target.value] || "" }))}>{Object.keys(EQUIPMENT_TYPE_TO_BRICK_CLASS).map((type) => <option key={type}>{type}</option>)}</select></Field>
+              <Field label="Brick class"><input value={equipmentForm.brick_class} onChange={(e) => setEquip("brick_class", e.target.value)} /></Field>
+            </div>
+            <Field label="Notes"><textarea value={equipmentForm.notes} onChange={(e) => setEquip("notes", e.target.value)} /></Field>
+            <div className="toolbar">
+              <button className="btn primary">Save Equipment</button>
+              <button className="btn" type="button" onClick={() => setEquipmentForm({ ...EMPTY_EQUIPMENT, property_id: selectedPropertyId })}>New Equipment</button>
+            </div>
+          </form>
+          <CompactTable rows={scopedEquipment} columns={[
+            ["equipment_name", "Equipment"],
+            ["equipment_type", "Type"],
+            ["brick_class", "Brick"]
+          ]} onEdit={(row) => setEquipmentForm({ ...row, property_id: String(row.property_id), tenant_id: row.tenant_id ? String(row.tenant_id) : "" })} onRemove={removeEquipment} />
+        </div>
       </div>
     </section>
   );
@@ -611,6 +952,59 @@ function SavingsView({ ready, properties, implementedEcms, savings, form, setFor
   );
 }
 
+function MonthlyUsageView({ ready, properties, tenants, usage, form, setForm, save, remove }) {
+  if (!ready) return <EmptyState />;
+  const propertyTenants = tenants.filter((tenant) => tenant.property_id === Number(form.property_id));
+  const scopedUsage = usage.filter((row) => !form.property_id || row.property_id === Number(form.property_id)).slice(0, 80);
+  const set = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
+  return (
+    <section className="section">
+      <h3>Monthly Usage</h3>
+      <div className="grid two">
+        <div className="card">
+          <form onSubmit={save}>
+            <div className="grid two">
+              <Field label="Property"><select value={form.property_id} onChange={(e) => set("property_id", e.target.value)}>{properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
+              <Field label="Month"><input type="month" value={form.usage_month} onChange={(e) => set("usage_month", e.target.value)} required /></Field>
+            </div>
+            <div className="grid two">
+              <Field label="Scope"><select value={form.scope_type} onChange={(e) => set("scope_type", e.target.value)}><option value="building">Whole building</option><option value="tenant">Tenant</option></select></Field>
+              <Field label="Tenant">{form.scope_type === "tenant" ? <select value={form.tenant_id} onChange={(e) => set("tenant_id", e.target.value)}><option value="">Select tenant...</option>{propertyTenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.tenant_name} - {tenant.location_label}</option>)}</select> : <input value="Whole building" disabled />}</Field>
+            </div>
+            <div className="grid three">
+              <Field label="Electricity kWh"><input type="number" step="0.01" value={form.electricity_kwh} onChange={(e) => set("electricity_kwh", e.target.value)} /></Field>
+              <Field label="Heating kWh"><input type="number" step="0.01" value={form.heating_kwh} onChange={(e) => set("heating_kwh", e.target.value)} /></Field>
+              <Field label="Cooling kWh"><input type="number" step="0.01" value={form.cooling_kwh} onChange={(e) => set("cooling_kwh", e.target.value)} /></Field>
+            </div>
+            <Field label="Notes"><textarea value={form.notes} onChange={(e) => set("notes", e.target.value)} /></Field>
+            <div className="toolbar">
+              <button className="btn primary">Save Usage</button>
+              <button className="btn" type="button" onClick={() => setForm({ ...defaultUsageForm(), property_id: form.property_id })}>New Usage Record</button>
+            </div>
+          </form>
+        </div>
+        <div className="card" style={{ overflow: "auto", maxHeight: 680 }}>
+          <table>
+            <thead><tr><th>Month</th><th>Scope</th><th>Electricity</th><th>Heating</th><th>Cooling</th><th></th></tr></thead>
+            <tbody>
+              {scopedUsage.map((row) => (
+                <tr key={row.id}>
+                  <td onClick={() => setForm({ ...row, property_id: String(row.property_id), tenant_id: row.tenant_id ? String(row.tenant_id) : "" })} style={{ cursor: "pointer" }}>{row.usage_month}</td>
+                  <td>{row.scope_type === "tenant" ? row.tenant_name : "Whole building"}</td>
+                  <td>{kwh(row.electricity_kwh)} kWh</td>
+                  <td>{kwh(row.heating_kwh)} kWh</td>
+                  <td>{kwh(row.cooling_kwh)} kWh</td>
+                  <td><button className="btn danger" type="button" onClick={() => remove(row.id)}>Remove</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function MeetingsView({ ready, properties, form, setForm, save, loadMeetingFiles, meetingFiles, selectedMeetingName, selectMeeting, meetingDraft, setMeetingDraft, saveMeetingDraft }) {
   if (!ready) return <EmptyState />;
   const set = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
@@ -661,8 +1055,9 @@ function ReportsView({ ready, db, properties, selectedProperty, setSelectedPrope
           <button className="btn primary" onClick={() => downloadExcelRegister(db, selectedProperty)}>Excel - Selected Property</button>
           <button className="btn" onClick={() => downloadExcelRegister(db, null)}>Excel - All Properties</button>
           <button className="btn" onClick={() => downloadWordRegister(db, selectedProperty)}>Word - Selected Property</button>
+          <button className="btn" onClick={() => downloadPdfRegister(db, selectedProperty)}>PDF - Selected Property</button>
         </div>
-        <p className="muted">PDF export will be added after the Word/Excel layout is verified in the browser version.</p>
+        <p className="muted">Browser reports download locally. The PDF is a first-pass browser version of the Streamlit PDF report and will be tightened after visual review.</p>
       </div>
     </section>
   );
@@ -693,8 +1088,72 @@ function DatabaseView({ ready, db, sqlText, setSqlText, runSql, sqlRows }) {
   );
 }
 
+function DatabaseAdminView({ ready, db, data, syncObsidianNotes, createDatabaseBackup, downloadDatabaseFile, busy }) {
+  if (!ready) return <EmptyState />;
+  const health = databaseHealth(db);
+  const integrity = health.integrity?.[0]?.integrity_check || "unknown";
+  const foreignKeyIssues = health.foreignKeys?.length || 0;
+  const missingEcmNotes = (data?.ecms || []).filter((ecm) => !ecm.obsidian_filename).length;
+  const missingSavingNotes = (data?.implementedSavings || []).filter((saving) => !saving.obsidian_filename).length;
+  return (
+    <section className="section">
+      <h3>Database Admin</h3>
+      <div className="grid four">
+        <Kpi label="Integrity" value={integrity} />
+        <Kpi label="FK issues" value={foreignKeyIssues} />
+        <Kpi label="ECM notes to sync" value={missingEcmNotes} />
+        <Kpi label="Savings notes to sync" value={missingSavingNotes} />
+      </div>
+      <div className="card" style={{ marginTop: 14 }}>
+        <div className="toolbar">
+          <button className="btn primary" disabled={busy} onClick={syncObsidianNotes}>{busy ? "Syncing..." : "Sync DB Records to Obsidian"}</button>
+          <button className="btn" onClick={createDatabaseBackup}>Create Local DB Backup</button>
+          <button className="btn" onClick={downloadDatabaseFile}>Download DB File</button>
+        </div>
+        <p className="muted">Sync writes ECM and implemented-savings Markdown files for existing database records and stores the generated filenames back into SQLite.</p>
+      </div>
+      <div className="card" style={{ overflow: "auto", marginTop: 14 }}>
+        <table>
+          <thead><tr><th>Table</th><th>Rows</th></tr></thead>
+          <tbody>{health.tables.map((row) => <tr key={row.table}><td>{row.table}</td><td>{row.rows}</td></tr>)}</tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 function Kpi({ label, value }) {
   return <div className="card kpi"><div className="label">{label}</div><div className="value">{value}</div></div>;
+}
+
+function SummaryTable({ title, rows }) {
+  return (
+    <div className="card">
+      <h3>{title}</h3>
+      <table>
+        <thead><tr><th>Bucket</th><th>Count</th></tr></thead>
+        <tbody>{rows.map((row) => <tr key={row.label}><td>{row.label}</td><td>{row.count}</td></tr>)}</tbody>
+      </table>
+    </div>
+  );
+}
+
+function CompactTable({ rows, columns, onEdit, onRemove }) {
+  return (
+    <div style={{ overflow: "auto", maxHeight: 320 }}>
+      <table>
+        <thead><tr>{columns.map(([, label]) => <th key={label}>{label}</th>)}<th></th></tr></thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.id}>
+              {columns.map(([key]) => <td key={key} onClick={() => onEdit(row)} style={{ cursor: "pointer" }}>{String(row[key] ?? "")}</td>)}
+              <td><button className="btn danger" type="button" onClick={() => onRemove(row.id)}>Remove</button></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 function Field({ label, children }) {
@@ -707,6 +1166,30 @@ function EmptyState() {
 
 function defaultSavingForm() {
   return { ecm_id: "", property_id: "", utility_type: "electricity", start_date: todayIso(), end_date: todayIso(), energy_saving_kwh: "", unit_cost_eur_per_kwh: "", notes: "" };
+}
+
+function defaultUsageForm() {
+  return {
+    property_id: "",
+    tenant_id: "",
+    scope_type: "building",
+    usage_month: todayIso().slice(0, 7),
+    electricity_kwh: "",
+    heating_kwh: "",
+    cooling_kwh: "",
+    notes: ""
+  };
+}
+
+function countRows(rows, key) {
+  const counts = new Map();
+  for (const row of rows || []) {
+    const label = row[key] || "Not stated";
+    counts.set(label, (counts.get(label) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 }
 
 function rollingPerformance(rows, propertyId, reportMonth) {

@@ -120,7 +120,7 @@ export async function deleteEcm(id: number): Promise<boolean> {
   }
 
   const result = await sql`DELETE FROM ecms WHERE id = ${id}`;
-  return result.rowCount > 0;
+  return (result.rowCount ?? 0) > 0;
 }
 
 export async function portfolioSummary(propertyId?: number): Promise<PortfolioSummary> {

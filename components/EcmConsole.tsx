@@ -1,7 +1,7 @@
 "use client";
 
 import { CheckCircle2, Database, FileText, Gauge, Plus, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { kwh, money } from "@/lib/calculations";
 import type { Ecm, EcmInput, EcmStatus, PortfolioSummary, Property, UtilityType } from "@/lib/types";
 
@@ -77,8 +77,10 @@ export function EcmConsole() {
     await loadData();
   }
 
-  async function addEcm(formData: FormData) {
+  async function addEcm(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     setSaving(true);
+    const formData = new FormData(event.currentTarget);
     const propertyId = Number(formData.get("property_id"));
     const payload: EcmInput = {
       property_id: propertyId,
@@ -100,6 +102,7 @@ export function EcmConsole() {
       body: JSON.stringify(payload)
     });
     setSaving(false);
+    event.currentTarget.reset();
     setTab("register");
     await changeProperty(String(propertyId));
   }
@@ -188,7 +191,7 @@ export function EcmConsole() {
 
         {tab === "add" && (
           <section className="panel">
-            <form action={addEcm} className="form-grid">
+            <form onSubmit={(event) => void addEcm(event)} className="form-grid">
               <div className="field">
                 <label>Property</label>
                 <select className="select" name="property_id" defaultValue={selectedPropertyId === "all" ? properties[0]?.id : selectedPropertyId}>

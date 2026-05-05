@@ -328,7 +328,15 @@ export default function App() {
           <p>Manage ECMs through a clean React interface while storing the database, notes, reports, and calculation files locally on your machine.</p>
         </div>
 
-        {active === "setup" && <SetupView handles={handles} configureFolder={configureFolder} importDatabase={importDatabase} ready={ready} />}
+        {active === "setup" && (
+          <SetupView
+            handles={handles}
+            configureFolder={configureFolder}
+            importDatabase={importDatabase}
+            loadDatabase={() => openDatabaseFolder(handles.database)}
+            ready={ready}
+          />
+        )}
         {active === "dashboard" && <DashboardView data={data} ready={ready} />}
         {active === "ecms" && (
           <EcmView
@@ -383,7 +391,7 @@ export default function App() {
   );
 }
 
-function SetupView({ handles, configureFolder, importDatabase, ready }) {
+function SetupView({ handles, configureFolder, importDatabase, loadDatabase, ready }) {
   return (
     <section className="section">
       <h3>Folder Setup</h3>
@@ -405,8 +413,13 @@ function SetupView({ handles, configureFolder, importDatabase, ready }) {
         ))}
       </div>
       <div className="toolbar">
+        <button className="btn primary" disabled={!handles.database} onClick={loadDatabase}>Load Workspace</button>
         <button className="btn primary" disabled={!handles.database} onClick={importDatabase}>Import Existing .db</button>
-        <span className="muted">{ready ? "ecm_register.db is open." : "Select a Database Folder to create/open ecm_register.db."}</span>
+        <span className="muted">
+          {ready
+            ? "ecm_register.db is open. Go to Dashboard or ECMs."
+            : "Select a Database Folder, then click Load Workspace or Import Existing .db."}
+        </span>
       </div>
     </section>
   );

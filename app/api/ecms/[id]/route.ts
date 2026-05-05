@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { deleteEcm, updateEcmStatus } from "@/lib/store";
 import type { EcmStatus } from "@/lib/types";
 
+export const runtime = "nodejs";
+
 type RouteContext = {
   params: Promise<{ id: string }>;
 };

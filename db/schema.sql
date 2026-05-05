@@ -1,74 +1,121 @@
+CREATE TABLE IF NOT EXISTS app_metadata (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS properties (
-  id SERIAL PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   address TEXT NOT NULL DEFAULT '',
-  total_floor_area DOUBLE PRECISION,
-  elec_cost_eur_per_kwh DOUBLE PRECISION NOT NULL DEFAULT 0,
-  heating_cost_eur_per_kwh DOUBLE PRECISION NOT NULL DEFAULT 0,
-  cooling_cost_eur_per_kwh DOUBLE PRECISION NOT NULL DEFAULT 0,
+  total_floor_area REAL,
+  elec_cost_eur_per_kwh REAL NOT NULL DEFAULT 0,
+  heating_cost_eur_per_kwh REAL NOT NULL DEFAULT 0,
+  cooling_cost_eur_per_kwh REAL NOT NULL DEFAULT 0,
   notes TEXT NOT NULL DEFAULT '',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS tenants (
-  id SERIAL PRIMARY KEY,
-  property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  property_id INTEGER NOT NULL,
   tenant_name TEXT NOT NULL,
-  tenant_floor_area DOUBLE PRECISION,
+  tenant_location_id TEXT NOT NULL DEFAULT '',
+  tenant_floor_area REAL,
   location_label TEXT NOT NULL DEFAULT '',
   notes TEXT NOT NULL DEFAULT '',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS equipment (
-  id SERIAL PRIMARY KEY,
-  property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
-  tenant_id INTEGER REFERENCES tenants(id) ON DELETE SET NULL,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  property_id INTEGER NOT NULL,
+  tenant_id INTEGER,
   equipment_name TEXT NOT NULL,
   equipment_type TEXT NOT NULL DEFAULT '',
   brick_class TEXT NOT NULL DEFAULT '',
+  dexma_location_id TEXT NOT NULL DEFAULT '',
+  dexma_device_id TEXT NOT NULL DEFAULT '',
   utility_type TEXT NOT NULL DEFAULT '',
   notes TEXT NOT NULL DEFAULT '',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS ecms (
-  id SERIAL PRIMARY KEY,
-  property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  property_id INTEGER NOT NULL,
   ref TEXT NOT NULL DEFAULT '',
   title TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'Open',
-  investment_eur DOUBLE PRECISION,
+  investment_eur REAL,
   utility_type TEXT NOT NULL DEFAULT 'electricity',
-  energy_saving_kwh DOUBLE PRECISION,
+  energy_saving_kwh REAL,
   what_why TEXT NOT NULL DEFAULT '',
   pitfall TEXT NOT NULL DEFAULT 'Not stated in source.',
   action TEXT NOT NULL DEFAULT '',
-  approved BOOLEAN NOT NULL DEFAULT FALSE,
+  approved INTEGER NOT NULL DEFAULT 0,
   notes TEXT NOT NULL DEFAULT '',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS ecm_equipment (
+  ecm_id INTEGER NOT NULL,
+  equipment_id INTEGER NOT NULL,
+  PRIMARY KEY (ecm_id, equipment_id),
+  FOREIGN KEY (ecm_id) REFERENCES ecms(id) ON DELETE CASCADE,
+  FOREIGN KEY (equipment_id) REFERENCES equipment(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS ecm_attachments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ecm_id INTEGER NOT NULL,
+  original_filename TEXT NOT NULL,
+  stored_filename TEXT NOT NULL,
+  stored_path TEXT NOT NULL,
+  file_type TEXT NOT NULL DEFAULT '',
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (ecm_id) REFERENCES ecms(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS monthly_utility_usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  property_id INTEGER NOT NULL,
+  tenant_id INTEGER,
+  scope_type TEXT NOT NULL DEFAULT 'building',
+  usage_month TEXT NOT NULL,
+  electricity_kwh REAL NOT NULL DEFAULT 0,
+  heating_kwh REAL NOT NULL DEFAULT 0,
+  cooling_kwh REAL NOT NULL DEFAULT 0,
+  notes TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE,
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE SET NULL,
+  UNIQUE (property_id, tenant_id, scope_type, usage_month)
 );
 
 CREATE TABLE IF NOT EXISTS ecm_measured_savings (
-  id SERIAL PRIMARY KEY,
-  ecm_id INTEGER NOT NULL REFERENCES ecms(id) ON DELETE CASCADE,
-  property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ecm_id INTEGER NOT NULL,
+  property_id INTEGER NOT NULL,
   utility_type TEXT NOT NULL DEFAULT 'electricity',
-  start_date DATE NOT NULL,
-  end_date DATE NOT NULL,
-  energy_saving_kwh DOUBLE PRECISION NOT NULL DEFAULT 0,
-  unit_cost_eur_per_kwh DOUBLE PRECISION NOT NULL DEFAULT 0,
-  cost_saving_eur DOUBLE PRECISION NOT NULL DEFAULT 0,
+  start_date TEXT NOT NULL,
+  end_date TEXT NOT NULL,
+  energy_saving_kwh REAL NOT NULL DEFAULT 0,
+  unit_cost_eur_per_kwh REAL NOT NULL DEFAULT 0,
+  cost_saving_eur REAL NOT NULL DEFAULT 0,
   notes TEXT NOT NULL DEFAULT '',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (ecm_id) REFERENCES ecms(id) ON DELETE CASCADE,
+  FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE
 );
-
-CREATE INDEX IF NOT EXISTS idx_ecms_property_id ON ecms(property_id);
-CREATE INDEX IF NOT EXISTS idx_tenants_property_id ON tenants(property_id);
-CREATE INDEX IF NOT EXISTS idx_equipment_property_id ON equipment(property_id);
-CREATE INDEX IF NOT EXISTS idx_measured_savings_property_id ON ecm_measured_savings(property_id);

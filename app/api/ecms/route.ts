@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { createEcm, listEcms } from "@/lib/store";
 import type { EcmInput } from "@/lib/types";
 
+export const runtime = "nodejs";
+
 export async function GET(request: NextRequest) {
   const propertyId = request.nextUrl.searchParams.get("propertyId");
   return NextResponse.json(await listEcms(propertyId ? Number(propertyId) : undefined));

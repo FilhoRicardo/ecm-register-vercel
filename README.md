@@ -1,76 +1,98 @@
-# ECM Register Vercel
+# ECM Register Local Next.js App
 
-Next.js migration of the local Streamlit ECM Register.
+Next.js/React version of the ECM Register for local laptop use.
 
-This repository is intentionally separate from the Streamlit app, which remains the fallback version.
+The Streamlit app remains untouched and can still be used as the fallback application.
 
-## What This Version Does
+## How This Version Works
 
-- Clean operations-console frontend built with Next.js
-- API-route backend under `app/api`
-- Vercel Postgres-ready database access
-- Local in-memory fallback data when `POSTGRES_URL` is not configured
-- Property selector
-- Portfolio KPI summary
-- ECM register table
-- Add ECM
-- Edit status/approval
-- Delete ECM
-- Monthly usage and implemented-savings API foundations
+- Frontend: Next.js/React
+- Backend: Next.js API routes
+- Database: local SQLite file
+- Default local database path: `data/ecm_register.db`
+- Browser URL: `http://localhost:3000`
 
-## Why Not SQLite On Vercel?
+This is not intended to use Vercel for live data. Vercel can host a demo, but it cannot reliably use a laptop-local SQLite file.
 
-The Streamlit version uses a local SQLite file. That is good for a single-user laptop app.
+You can keep this folder anywhere on your laptop. If it is moved, keep the `data/` folder with it because that is where the local database lives.
 
-Vercel deployments do not provide a durable writable local filesystem for production app data. For production use, this version should use Vercel Postgres, Neon, Supabase Postgres, or another hosted database.
+## First-Time Setup
 
-## Local Run
+From this folder:
 
 ```bash
 npm install
+npm run import:streamlit
 npm run dev
 ```
 
-Open:
+Then open:
 
 ```text
 http://localhost:3000
 ```
 
-Without `POSTGRES_URL`, the app uses local in-memory demo data. Edits work during the running process but are not persisted.
-
-## Production Setup
-
-1. Create a new Vercel project from this repo.
-2. Add Vercel Postgres or another Postgres provider.
-3. Set `POSTGRES_URL` in Vercel environment variables.
-4. Run `db/schema.sql` against the database.
-5. Import data from the Streamlit SQLite database using a migration script.
-
-The migration script is intentionally not included yet because it should be reviewed before moving live project data into a cloud database.
-
-## Project Structure
+`npm run import:streamlit` copies the current Streamlit database from:
 
 ```text
-app/
-  api/                 Backend API routes
-  page.tsx             Main app page
-  globals.css          Operations-console styling
-components/
-  EcmConsole.tsx       Main frontend experience
-lib/
-  store.ts             Database/in-memory data layer
-  types.ts             Shared TypeScript types
-  calculations.ts      Savings calculations
-db/
-  schema.sql           Postgres schema
+../ecm_register_app/ecm_register.db
 ```
 
-## Fallback Strategy
+to:
 
-Keep using the Streamlit app for live work until the Vercel version has:
+```text
+data/ecm_register.db
+```
 
-- imported real data
-- tested backups/exports
-- matched the critical workflows
-- confirmed database persistence on Vercel
+The copied database is intentionally ignored by Git.
+
+To import from a different source database:
+
+```bash
+npm run import:streamlit -- C:\path\to\ecm_register.db
+```
+
+## Daily Use
+
+```bash
+npm run dev
+```
+
+Then use the app at:
+
+```text
+http://localhost:3000
+```
+
+## Backup
+
+For a complete local backup of this Next.js version, copy:
+
+```text
+data/ecm_register.db
+```
+
+When attachment support is added to this app, also copy the future attachments folder.
+
+Do not rely on GitHub for the database backup. GitHub stores the application code, while the SQLite database remains local on your laptop.
+
+## Current Scope
+
+Implemented:
+
+- property selector
+- portfolio KPI summary
+- ECM register table
+- add ECM
+- edit ECM status
+- delete ECM
+- local SQLite persistence
+
+Still to migrate from Streamlit:
+
+- tenants and equipment editor
+- monthly utility usage UI
+- implemented savings UI
+- report exports
+- attachment uploads
+- database explorer/admin pages

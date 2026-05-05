@@ -1,98 +1,41 @@
-# ECM Register Local Next.js App
+# ECM Register Vercel
 
-Next.js/React version of the ECM Register for local laptop use.
+Browser-local ECM Register for a single-user Obsidian workflow.
 
-The Streamlit app remains untouched and can still be used as the fallback application.
+Vercel serves the React app. The browser asks the user to select local folders, then reads and writes the local SQLite database, ECM Markdown notes, implemented-savings Markdown notes, meeting notes, report exports, and calculation reference files directly on the device.
 
-## How This Version Works
+## Storage Model
 
-- Frontend: Next.js/React
-- Backend: Next.js API routes
-- Database: local SQLite file
-- Default local database path: `data/ecm_register.db`
-- Browser URL: `http://localhost:3000`
+- `ecm_register.db` remains the structured source of truth.
+- ECMs are stored in SQLite and mirrored to Obsidian Markdown.
+- Implemented savings are stored in SQLite and mirrored to Obsidian Markdown.
+- Monthly meeting notes are written to Obsidian Markdown.
+- Calculation/reference files are copied locally with controlled filenames.
+- Reports remain downloads, with optional save-to-folder support.
 
-This is not intended to use Vercel for live data. Vercel can host a demo, but it cannot reliably use a laptop-local SQLite file.
+## Onboarding Folders
 
-You can keep this folder anywhere on your laptop. If it is moved, keep the `data/` folder with it because that is where the local database lives.
+The app asks for these folders:
 
-## First-Time Setup
+- Database Folder
+- ECM Notes Folder
+- Implemented Savings Notes Folder
+- Monthly Meeting Notes Folder
+- Calculation Files Folder
+- Reports Folder
+- Imports Folder
 
-From this folder:
+Chrome or Microsoft Edge is required because the app uses the File System Access API.
+
+## Development
 
 ```bash
 npm install
-npm run import:streamlit
 npm run dev
 ```
 
-Then open:
+## Deployment
 
-```text
-http://localhost:3000
-```
+Deploy as a static Vite app on Vercel.
 
-`npm run import:streamlit` copies the current Streamlit database from:
-
-```text
-../ecm_register_app/ecm_register.db
-```
-
-to:
-
-```text
-data/ecm_register.db
-```
-
-The copied database is intentionally ignored by Git.
-
-To import from a different source database:
-
-```bash
-npm run import:streamlit -- C:\path\to\ecm_register.db
-```
-
-## Daily Use
-
-```bash
-npm run dev
-```
-
-Then use the app at:
-
-```text
-http://localhost:3000
-```
-
-## Backup
-
-For a complete local backup of this Next.js version, copy:
-
-```text
-data/ecm_register.db
-```
-
-When attachment support is added to this app, also copy the future attachments folder.
-
-Do not rely on GitHub for the database backup. GitHub stores the application code, while the SQLite database remains local on your laptop.
-
-## Current Scope
-
-Implemented:
-
-- property selector
-- portfolio KPI summary
-- ECM register table
-- add ECM
-- edit ECM status
-- delete ECM
-- local SQLite persistence
-
-Still to migrate from Streamlit:
-
-- tenants and equipment editor
-- monthly utility usage UI
-- implemented savings UI
-- report exports
-- attachment uploads
-- database explorer/admin pages
+The database and files are not uploaded to Vercel. Vercel hosts only the frontend app bundle.

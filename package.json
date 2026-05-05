@@ -1,29 +1,21 @@
 {
   "name": "ecm-register-vercel",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint",
-    "typecheck": "tsc --noEmit",
-    "import:streamlit": "node scripts/import-streamlit-db.mjs"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
   },
   "dependencies": {
-    "better-sqlite3": "latest",
-    "lucide-react": "latest",
-    "next": "latest",
-    "react": "latest",
-    "react-dom": "latest"
+    "@vitejs/plugin-react": "^4.2.1",
+    "docx": "^8.5.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "sql.js": "^1.10.3",
+    "vite": "^5.1.0",
+    "xlsx": "^0.18.5"
   },
-  "devDependencies": {
-    "@types/better-sqlite3": "latest",
-    "@types/node": "latest",
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
-    "eslint": "latest",
-    "eslint-config-next": "latest",
-    "typescript": "latest"
-  }
+  "devDependencies": {}
 }

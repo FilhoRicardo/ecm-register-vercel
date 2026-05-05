@@ -1,3 +1,6 @@
+export const SCHEMA_SQL = `
+PRAGMA foreign_keys = ON;
+
 CREATE TABLE IF NOT EXISTS app_metadata (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL,
@@ -60,6 +63,7 @@ CREATE TABLE IF NOT EXISTS ecms (
   pitfall TEXT NOT NULL DEFAULT 'Not stated in source.',
   action TEXT NOT NULL DEFAULT '',
   approved INTEGER NOT NULL DEFAULT 0,
+  obsidian_filename TEXT NOT NULL DEFAULT '',
   notes TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -79,8 +83,9 @@ CREATE TABLE IF NOT EXISTS ecm_attachments (
   ecm_id INTEGER NOT NULL,
   original_filename TEXT NOT NULL,
   stored_filename TEXT NOT NULL,
-  stored_path TEXT NOT NULL,
-  file_type TEXT NOT NULL DEFAULT '',
+  relative_path TEXT NOT NULL,
+  content_type TEXT NOT NULL DEFAULT '',
+  file_size INTEGER NOT NULL DEFAULT 0,
   notes TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (ecm_id) REFERENCES ecms(id) ON DELETE CASCADE
@@ -113,9 +118,27 @@ CREATE TABLE IF NOT EXISTS ecm_measured_savings (
   energy_saving_kwh REAL NOT NULL DEFAULT 0,
   unit_cost_eur_per_kwh REAL NOT NULL DEFAULT 0,
   cost_saving_eur REAL NOT NULL DEFAULT 0,
+  obsidian_filename TEXT NOT NULL DEFAULT '',
   notes TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (ecm_id) REFERENCES ecms(id) ON DELETE CASCADE,
   FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE
 );
+`;
+
+const MIGRATIONS = [
+  "ALTER TABLE ecms ADD COLUMN obsidian_filename TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE ecm_measured_savings ADD COLUMN obsidian_filename TEXT NOT NULL DEFAULT ''"
+];
+
+export function migrate(db) {
+  db.run(SCHEMA_SQL);
+  for (const sql of MIGRATIONS) {
+    try {
+      db.run(sql);
+    } catch {
+      // Column already exists.
+    }
+  }
+}

@@ -77,6 +77,7 @@ export default function App() {
   const [sqlText, setSqlText] = useState("SELECT * FROM ecms LIMIT 20");
   const [sqlRows, setSqlRows] = useState([]);
   const [toast, setToast] = useState("");
+  const [setupError, setSetupError] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -122,42 +123,72 @@ export default function App() {
   }
 
   async function configureFolder(key) {
-    if (!supportsFileSystemAccess()) {
-      notify("Use Chrome or Microsoft Edge. This browser does not support local folder access.");
-      return;
+    try {
+      setSetupError("");
+      if (!supportsFileSystemAccess()) {
+        notify("Use Chrome or Microsoft Edge. This browser does not support local folder access.");
+        return;
+      }
+      const handle = await window.showDirectoryPicker({ mode: "readwrite" });
+      await idbSet(`folder_${key}`, handle);
+      setHandles((prev) => ({ ...prev, [key]: handle }));
+      notify("Folder configured.");
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+      setSetupError(error.message || String(error));
+      notify("Folder setup failed.");
     }
-    const handle = await window.showDirectoryPicker({ mode: "readwrite" });
-    await idbSet(`folder_${key}`, handle);
-    setHandles((prev) => ({ ...prev, [key]: handle }));
-    if (key === "database") await openDatabaseFolder(handle);
-    notify("Folder configured.");
   }
 
   async function openDatabaseFolder(folderHandle) {
-    const fileHandle = await folderHandle.getFileHandle("ecm_register.db", { create: true });
-    const nextDb = await openDatabaseFromHandle(fileHandle);
-    setDb(nextDb);
-    setDbFileHandle(fileHandle);
-    setData(getPortfolio(nextDb));
-    setActive("dashboard");
+    try {
+      setBusy(true);
+      setSetupError("");
+      if (!folderHandle) throw new Error("Select the Database Folder first.");
+      const fileHandle = await folderHandle.getFileHandle("ecm_register.db", { create: true });
+      const nextDb = await openDatabaseFromHandle(fileHandle);
+      setDb(nextDb);
+      setDbFileHandle(fileHandle);
+      const nextData = getPortfolio(nextDb);
+      setData(nextData);
+      setActive("dashboard");
+      notify(`Workspace loaded: ${nextData.properties.length} properties, ${nextData.ecms.length} ECMs.`);
+    } catch (error) {
+      setSetupError(error.message || String(error));
+      notify("Database load failed.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function importDatabase() {
-    if (!handles.database) {
-      notify("Configure the Database Folder first.");
-      return;
+    try {
+      setBusy(true);
+      setSetupError("");
+      if (!handles.database) throw new Error("Configure the Database Folder first.");
+      const [fileHandle] = await window.showOpenFilePicker({
+        types: [{ description: "SQLite database", accept: { "application/octet-stream": [".db", ".sqlite", ".sqlite3"], "application/vnd.sqlite3": [".db", ".sqlite", ".sqlite3"] } }]
+      });
+      const file = await fileHandle.getFile();
+      const importedDb = await openDatabaseFromFile(file);
+      const target = await handles.database.getFileHandle("ecm_register.db", { create: true });
+      await saveDatabase(importedDb, target);
+      setDb(importedDb);
+      setDbFileHandle(target);
+      const nextData = getPortfolio(importedDb);
+      setData(nextData);
+      setSelectedPropertyId(nextData.properties[0]?.id ? String(nextData.properties[0].id) : "");
+      setEcmForm((prev) => ({ ...prev, property_id: nextData.properties[0]?.id ? String(nextData.properties[0].id) : "" }));
+      setMeetingForm((prev) => ({ ...prev, property_id: nextData.properties[0]?.id ? String(nextData.properties[0].id) : "" }));
+      setActive("dashboard");
+      notify(`Database imported: ${nextData.properties.length} properties, ${nextData.ecms.length} ECMs.`);
+    } catch (error) {
+      if (error?.name === "AbortError") return;
+      setSetupError(error.message || String(error));
+      notify("Database import failed.");
+    } finally {
+      setBusy(false);
     }
-    const [fileHandle] = await window.showOpenFilePicker({
-      types: [{ description: "SQLite database", accept: { "application/octet-stream": [".db", ".sqlite", ".sqlite3"] } }]
-    });
-    const file = await fileHandle.getFile();
-    const importedDb = await openDatabaseFromFile(file);
-    const target = await handles.database.getFileHandle("ecm_register.db", { create: true });
-    await saveDatabase(importedDb, target);
-    setDb(importedDb);
-    setDbFileHandle(target);
-    setData(getPortfolio(importedDb));
-    notify("Database imported and saved locally.");
   }
 
   async function persist(message = "Saved.") {
@@ -334,6 +365,9 @@ export default function App() {
             configureFolder={configureFolder}
             importDatabase={importDatabase}
             loadDatabase={() => openDatabaseFolder(handles.database)}
+            data={data}
+            setupError={setupError}
+            busy={busy}
             ready={ready}
           />
         )}
@@ -391,11 +425,21 @@ export default function App() {
   );
 }
 
-function SetupView({ handles, configureFolder, importDatabase, loadDatabase, ready }) {
+function SetupView({ handles, configureFolder, importDatabase, loadDatabase, data, setupError, busy, ready }) {
+  const requiredConfigured = FOLDERS.filter((folder) => folder.required).every((folder) => handles[folder.key]);
   return (
     <section className="section">
       <h3>Folder Setup</h3>
       <p className="muted">Configure local folders once per browser/device. Folder permissions are stored in the browser, not on Vercel.</p>
+      {setupError ? <div className="card" style={{ borderColor: "rgba(255,95,95,0.45)", color: "#ffd8d8", marginBottom: 14 }}>{setupError}</div> : null}
+      {ready && data ? (
+        <div className="grid four" style={{ marginBottom: 14 }}>
+          <Kpi label="Loaded Properties" value={data.properties.length} />
+          <Kpi label="Loaded ECMs" value={data.ecms.length} />
+          <Kpi label="Monthly Usage Rows" value={data.monthlyUsage.length} />
+          <Kpi label="Implemented Savings" value={data.implementedSavings.length} />
+        </div>
+      ) : null}
       <div className="grid two">
         {FOLDERS.map((folder) => (
           <div className="card" key={folder.key}>
@@ -413,12 +457,14 @@ function SetupView({ handles, configureFolder, importDatabase, loadDatabase, rea
         ))}
       </div>
       <div className="toolbar">
-        <button className="btn primary" disabled={!handles.database} onClick={loadDatabase}>Load Workspace</button>
-        <button className="btn primary" disabled={!handles.database} onClick={importDatabase}>Import Existing .db</button>
+        <button className="btn primary" disabled={!handles.database || busy} onClick={loadDatabase}>{busy ? "Working..." : "Load Workspace"}</button>
+        <button className="btn primary" disabled={!handles.database || busy} onClick={importDatabase}>Import Existing .db</button>
         <span className="muted">
           {ready
             ? "ecm_register.db is open. Go to Dashboard or ECMs."
-            : "Select a Database Folder, then click Load Workspace or Import Existing .db."}
+            : requiredConfigured
+              ? "All required folders are configured. Click Import Existing .db, then the app will load the dashboard."
+              : "Select the required folders first, then import your existing .db."}
         </span>
       </div>
     </section>

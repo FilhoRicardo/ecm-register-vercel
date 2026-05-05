@@ -1,4 +1,5 @@
 import initSqlJs from "sql.js";
+import sqlWasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 import { migrate } from "./schema.js";
 import { writeBinaryFile } from "./storage.js";
 import { utilityCost } from "./format.js";
@@ -8,7 +9,7 @@ let SQL = null;
 export async function loadSqlJs() {
   if (SQL) return SQL;
   SQL = await initSqlJs({
-    locateFile: (file) => `https://sql.js.org/dist/${file}`
+    locateFile: () => sqlWasmUrl
   });
   return SQL;
 }

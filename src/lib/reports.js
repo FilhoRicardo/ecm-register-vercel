@@ -417,26 +417,37 @@ function addKeyValuePptTable(slide, x, y, w, rows, rowH = 0.27, fontSize = 7) {
 }
 
 function addPptTable(slide, x, y, w, rows, colW, rowH = 0.3, fontSize = 7, options = {}) {
-  const body = rows.map((row, rowIndex) => row.map((value, colIndex) => ({
-    text: cleanReportText(value || "-"),
-    options: {
-      color: PPT_DARK,
-      bold: rowIndex === 0 || (options.firstColBold && colIndex === 0),
-      fill: { color: rowIndex === 0 || (options.firstColBold && colIndex === 0) ? PPT_LIGHT : "FFFFFF", transparency: 5 },
-      valign: "mid",
-      margin: 0.04
-    }
-  })));
-  slide.addTable(body, {
-    x, y, w,
-    h: Math.max(rowH * rows.length, rowH),
-    colW,
-    fontFace: "Arial",
-    fontSize,
-    color: PPT_DARK,
-    margin: 0.04,
-    border: { type: "solid", color: PPT_BORDER, pt: 0.5 },
-    valign: "mid"
+  const totalColW = colW.reduce((total, value) => total + Number(value || 0), 0) || w;
+  const scale = w / totalColW;
+  rows.forEach((row, rowIndex) => {
+    let cellX = x;
+    row.forEach((value, colIndex) => {
+      const cellW = Number(colW[colIndex] || 0) * scale;
+      const highlighted = rowIndex === 0 || (options.firstColBold && colIndex === 0);
+      slide.addShape("rect", {
+        x: cellX,
+        y: y + rowIndex * rowH,
+        w: cellW,
+        h: rowH,
+        fill: { color: highlighted ? PPT_LIGHT : "FFFFFF", transparency: 5 },
+        line: { color: PPT_BORDER, pt: 0.5 }
+      });
+      slide.addText(cleanReportText(value || "-"), {
+        x: cellX + 0.04,
+        y: y + rowIndex * rowH + 0.03,
+        w: Math.max(0.05, cellW - 0.08),
+        h: Math.max(0.05, rowH - 0.06),
+        fontFace: "Arial",
+        fontSize,
+        color: PPT_DARK,
+        bold: highlighted,
+        fit: "shrink",
+        breakLine: false,
+        valign: "mid",
+        margin: 0
+      });
+      cellX += cellW;
+    });
   });
 }
 

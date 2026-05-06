@@ -29,11 +29,11 @@ import {
   upsertProperty,
   upsertTenant
 } from "./lib/sqlite.js";
-import { downloadBlob, ensurePermission, idbGet, idbSet, supportsFileSystemAccess, writeFile } from "./lib/storage.js";
+import { downloadBlob, ensurePermission, idbGet, idbSet, permissionState, supportsFileSystemAccess, writeFile } from "./lib/storage.js";
 import { listMarkdownFiles, routeCalculationFile, writeTextIntoFolder } from "./lib/files.js";
-import { buildEcmMarkdown, buildMeetingMarkdown, buildSavingMarkdown, ecmFilename, meetingFilename, savingFilename } from "./lib/markdown.js";
-import { downloadExcelRegister, downloadPdfRegister, downloadWordRegister } from "./lib/reports.js";
-import { EQUIPMENT_TYPE_TO_BRICK_CLASS, kwh, money, slug, todayIso, utilityCost } from "./lib/format.js";
+import { buildEcmMarkdown, buildMeetingMarkdown, buildSavingMarkdown, ecmFilename, extractMeetingSections, meetingFilename, replaceMeetingSections, savingFilename } from "./lib/markdown.js";
+import { downloadEcmReviewWorkbook, downloadExcelRegister, downloadPdfRegister, downloadWordRegister, parseEcmReviewWorkbook } from "./lib/reports.js";
+import { EQUIPMENT_TYPE_TO_BRICK_CLASS, kwh, money, todayIso, utilityCost } from "./lib/format.js";
 
 const FOLDERS = [
   { key: "database", label: "Database Folder", required: true },
@@ -46,17 +46,17 @@ const FOLDERS = [
 ];
 
 const NAV = [
-  ["setup", "Setup"],
-  ["dashboard", "Dashboard"],
-  ["properties", "Properties"],
-  ["tenants", "Tenants & Equipment"],
-  ["ecms", "ECMs"],
-  ["savings", "Implemented Savings"],
-  ["usage", "Monthly Usage"],
-  ["meetings", "Monthly Meetings"],
-  ["reports", "Reports"],
-  ["database", "SQLite Lab"],
-  ["admin", "Database Admin"]
+  ["setup", "⚙️ Setup"],
+  ["dashboard", "🎯 Dashboard"],
+  ["properties", "🏢 Properties"],
+  ["tenants", "👥 Tenants & Equipment"],
+  ["ecms", "⚡ ECMs"],
+  ["savings", "💶 Implemented Savings"],
+  ["usage", "📊 Monthly Usage"],
+  ["meetings", "📝 Monthly Meetings"],
+  ["reports", "📤 Reports"],
+  ["database", "🧪 SQLite Lab"],
+  ["admin", "🛡️ Database Admin"]
 ];
 
 const EMPTY_ECM = {
@@ -105,6 +105,7 @@ const EMPTY_EQUIPMENT = {
 export default function App() {
   const [active, setActive] = useState("setup");
   const [handles, setHandles] = useState({});
+  const [folderStatuses, setFolderStatuses] = useState({});
   const [db, setDb] = useState(null);
   const [dbFileHandle, setDbFileHandle] = useState(null);
   const [data, setData] = useState(null);
@@ -120,7 +121,7 @@ export default function App() {
   const [meetingForm, setMeetingForm] = useState({ property_id: "", report_month: todayIso().slice(0, 7), meeting_date: todayIso(), pre: "", post: "" });
   const [meetingFiles, setMeetingFiles] = useState([]);
   const [selectedMeetingName, setSelectedMeetingName] = useState("");
-  const [meetingDraft, setMeetingDraft] = useState("");
+  const [meetingDraft, setMeetingDraft] = useState({ pre: "", post: "" });
   const [sqlText, setSqlText] = useState("SELECT * FROM ecms LIMIT 20");
   const [sqlRows, setSqlRows] = useState([]);
   const [toast, setToast] = useState("");
@@ -159,17 +160,20 @@ export default function App() {
 
   async function boot() {
     const next = {};
+    const statuses = {};
     for (const def of FOLDERS) {
       const handle = await idbGet(`folder_${def.key}`);
       if (!handle) continue;
       try {
-        if (await ensurePermission(handle, "readwrite")) next[def.key] = handle;
+        next[def.key] = handle;
+        statuses[def.key] = await permissionState(handle, "readwrite");
       } catch {
         // Keep boot resilient; user can reconfigure the folder.
       }
     }
     setHandles(next);
-    if (next.database) await openDatabaseFolder(next.database);
+    setFolderStatuses(statuses);
+    if (next.database && statuses.database === "granted") await openDatabaseFolder(next.database);
   }
 
   async function configureFolder(key) {
@@ -182,6 +186,7 @@ export default function App() {
       const handle = await window.showDirectoryPicker({ mode: "readwrite" });
       await idbSet(`folder_${key}`, handle);
       setHandles((prev) => ({ ...prev, [key]: handle }));
+      setFolderStatuses((prev) => ({ ...prev, [key]: "granted" }));
       notify("Folder configured.");
     } catch (error) {
       if (error?.name === "AbortError") return;
@@ -195,6 +200,14 @@ export default function App() {
       setBusy(true);
       setSetupError("");
       if (!folderHandle) throw new Error("Select the Database Folder first.");
+      const databaseGranted = await ensurePermission(folderHandle, "readwrite");
+      const statuses = { database: databaseGranted ? "granted" : await permissionState(folderHandle, "readwrite") };
+      for (const [key, handle] of Object.entries(handles)) {
+        if (!handle || key === "database") continue;
+        statuses[key] = await permissionState(handle, "readwrite");
+      }
+      setFolderStatuses((prev) => ({ ...prev, ...statuses }));
+      if (statuses.database !== "granted") throw new Error("Database folder permission was not granted.");
       const fileHandle = await folderHandle.getFileHandle("ecm_register.db", { create: true });
       const nextDb = await openDatabaseFromHandle(fileHandle);
       setDb(nextDb);
@@ -216,6 +229,9 @@ export default function App() {
       setBusy(true);
       setSetupError("");
       if (!handles.database) throw new Error("Configure the Database Folder first.");
+      const databaseGranted = await ensurePermission(handles.database, "readwrite");
+      setFolderStatuses((prev) => ({ ...prev, database: databaseGranted ? "granted" : "denied" }));
+      if (!databaseGranted) throw new Error("Database folder permission was not granted.");
       const [fileHandle] = await window.showOpenFilePicker({
         types: [{ description: "SQLite database", accept: { "application/octet-stream": [".db", ".sqlite", ".sqlite3"], "application/vnd.sqlite3": [".db", ".sqlite", ".sqlite3"] } }]
       });
@@ -323,6 +339,14 @@ export default function App() {
     }
     setBusy(true);
     try {
+      const ecmPermission = await ensurePermission(handles.ecmNotes, "readwrite");
+      const savingPermission = await ensurePermission(handles.savingNotes, "readwrite");
+      setFolderStatuses((prev) => ({
+        ...prev,
+        ecmNotes: ecmPermission ? "granted" : "denied",
+        savingNotes: savingPermission ? "granted" : "denied"
+      }));
+      if (!ecmPermission || !savingPermission) throw new Error("Obsidian note folder permissions were not granted.");
       const propertiesNow = getProperties(db);
       const ecmsNow = getEcms(db);
       for (const ecm of ecmsNow) {
@@ -364,6 +388,12 @@ export default function App() {
     if (!ready) return;
     setBusy(true);
     try {
+      if (!handles.ecmNotes || !(await ensurePermission(handles.ecmNotes, "readwrite"))) throw new Error("ECM Notes folder permission was not granted.");
+      setFolderStatuses((prev) => ({ ...prev, ecmNotes: "granted" }));
+      if (calcFile) {
+        if (!handles.calculationFiles || !(await ensurePermission(handles.calculationFiles, "readwrite"))) throw new Error("Calculation Files folder permission was not granted.");
+        setFolderStatuses((prev) => ({ ...prev, calculationFiles: "granted" }));
+      }
       const id = upsertEcm(db, {
         ...ecmForm,
         id: ecmForm.id || null,
@@ -417,6 +447,8 @@ export default function App() {
     if (!ready) return;
     setBusy(true);
     try {
+      if (!handles.savingNotes || !(await ensurePermission(handles.savingNotes, "readwrite"))) throw new Error("Implemented Savings Notes folder permission was not granted.");
+      setFolderStatuses((prev) => ({ ...prev, savingNotes: "granted" }));
       const ecm = data.ecms.find((item) => item.id === Number(savingForm.ecm_id));
       const property = properties.find((item) => item.id === Number(savingForm.property_id));
       const unitCost = savingForm.unit_cost_eur_per_kwh || utilityCost(property, savingForm.utility_type);
@@ -443,6 +475,11 @@ export default function App() {
 
   async function createMeetingNote(event) {
     event.preventDefault();
+    if (!handles.meetingNotes || !(await ensurePermission(handles.meetingNotes, "readwrite"))) {
+      notify("Monthly Meeting Notes folder permission was not granted.");
+      return;
+    }
+    setFolderStatuses((prev) => ({ ...prev, meetingNotes: "granted" }));
     const property = properties.find((item) => item.id === Number(meetingForm.property_id));
     const performance = rollingPerformance(data.monthlyUsage, property?.id, meetingForm.report_month);
     const openEcms = data.ecms.filter((ecm) => ecm.property_id === property?.id && ecm.status === "Open");
@@ -462,6 +499,11 @@ export default function App() {
   }
 
   async function loadMeetingFiles() {
+    if (!handles.meetingNotes || !(await ensurePermission(handles.meetingNotes, "readwrite"))) {
+      notify("Monthly Meeting Notes folder permission was not granted.");
+      return [];
+    }
+    setFolderStatuses((prev) => ({ ...prev, meetingNotes: "granted" }));
     const files = await listMarkdownFiles(handles.meetingNotes);
     setMeetingFiles(files);
     return files;
@@ -470,15 +512,76 @@ export default function App() {
   function selectMeeting(name) {
     const file = meetingFiles.find((item) => item.name === name);
     setSelectedMeetingName(name);
-    setMeetingDraft(file?.text || "");
+    setMeetingDraft(extractMeetingSections(file?.text || ""));
   }
 
   async function saveMeetingDraft() {
     const file = meetingFiles.find((item) => item.name === selectedMeetingName);
     if (!file) return;
-    await writeFile(file.handle, meetingDraft);
+    await writeFile(file.handle, replaceMeetingSections(file.text, meetingDraft));
     await loadMeetingFiles();
     notify("Meeting note updated in Obsidian.");
+  }
+
+  async function importEcmReviewWorkbook(event) {
+    const file = event.target.files?.[0];
+    if (!file || !ready) return;
+    setBusy(true);
+    try {
+      const reviewRows = await parseEcmReviewWorkbook(file);
+      const existing = getEcms(db);
+      const propertiesNow = getProperties(db);
+      const canWriteNotes = handles.ecmNotes ? await ensurePermission(handles.ecmNotes, "readwrite") : false;
+      if (handles.ecmNotes) setFolderStatuses((prev) => ({ ...prev, ecmNotes: canWriteNotes ? "granted" : "denied" }));
+      let updated = 0;
+      let skipped = 0;
+
+      for (const row of reviewRows) {
+        const current = existing.find((ecm) => Number(ecm.id) === Number(row.ecm_id));
+        if (!current) {
+          skipped += 1;
+          continue;
+        }
+        const decision = String(row.review_decision || "").trim().toLowerCase();
+        const reviewerComments = String(row.reviewer_comments || "").trim();
+        let status = stringOrExisting(row.status, current.status);
+        if (decision === "implemented" && !String(row.status || "").trim()) status = "Implemented";
+        if (decision === "reject" && !String(row.status || "").trim()) status = "Rejected";
+        let notes = stringOrExisting(row.notes, current.notes);
+        if (reviewerComments && !notes.includes(reviewerComments)) {
+          notes = notes ? `${notes}\n\nReview comments: ${reviewerComments}` : `Review comments: ${reviewerComments}`;
+        }
+        upsertEcm(db, {
+          ...current,
+          ref: stringOrExisting(row.ref, current.ref),
+          title: stringOrExisting(row.title, current.title),
+          status,
+          approved: approvedValue(row.approved, current.approved),
+          utility_type: stringOrExisting(row.utility_type, current.utility_type),
+          investment_eur: numberOrExisting(row.investment_eur, current.investment_eur),
+          energy_saving_kwh: numberOrExisting(row.energy_saving_kwh, current.energy_saving_kwh),
+          what_why: stringOrExisting(row.what_why, current.what_why),
+          pitfall: stringOrExisting(row.pitfall, current.pitfall),
+          action: stringOrExisting(row.action, current.action),
+          notes
+        });
+        const saved = getEcms(db).find((ecm) => Number(ecm.id) === Number(row.ecm_id));
+        if (canWriteNotes && saved) {
+          const property = propertiesNow.find((item) => item.id === saved.property_id);
+          const attachments = getAttachments(db, saved.id);
+          const filename = saved.obsidian_filename || ecmFilename(saved);
+          await writeTextIntoFolder(handles.ecmNotes, filename, buildEcmMarkdown(saved, property, attachments));
+          setEcmObsidianFilename(db, saved.id, filename);
+        }
+        updated += 1;
+      }
+      await persist(`Imported ${updated} ECM updates from workbook${skipped ? `; skipped ${skipped} unmatched rows` : ""}.`);
+    } catch (error) {
+      notify(error.message || String(error));
+    } finally {
+      event.target.value = "";
+      setBusy(false);
+    }
   }
 
   function runSql() {
@@ -498,7 +601,7 @@ export default function App() {
       {toast ? <div className="toast">{toast}</div> : null}
       <aside className="sidebar">
         <div className="brand">
-          <h1>ECM Register</h1>
+          <h1>⚡ ECM Register</h1>
           <p>Browser-local SQLite workspace</p>
         </div>
         <nav className="nav">
@@ -517,13 +620,18 @@ export default function App() {
 
       <main className="main">
         <div className="hero">
-          <h2>Local ECM Register</h2>
-          <p>Manage ECMs through a clean React interface while storing the database, notes, reports, and calculation files locally on your machine.</p>
+          <div>
+            <span className="eyebrow">TODAY ENERGY CONTROL</span>
+            <h2>Local ECM Register</h2>
+            <p>Manage properties, ECMs, usage, reports, Obsidian notes, and calculation evidence while keeping every working file local to your machine.</p>
+          </div>
+          <span className="pill">{ready ? "Synced local workspace" : "Setup required"}</span>
         </div>
 
         {active === "setup" && (
           <SetupView
             handles={handles}
+            folderStatuses={folderStatuses}
             configureFolder={configureFolder}
             importDatabase={importDatabase}
             loadDatabase={() => openDatabaseFolder(handles.database)}
@@ -620,7 +728,17 @@ export default function App() {
             saveMeetingDraft={saveMeetingDraft}
           />
         )}
-        {active === "reports" && <ReportsView ready={ready} db={db} properties={properties} selectedProperty={selectedProperty} setSelectedPropertyId={setSelectedPropertyId} />}
+        {active === "reports" && (
+          <ReportsView
+            ready={ready}
+            db={db}
+            properties={properties}
+            selectedProperty={selectedProperty}
+            setSelectedPropertyId={setSelectedPropertyId}
+            importEcmReviewWorkbook={importEcmReviewWorkbook}
+            busy={busy}
+          />
+        )}
         {active === "database" && <DatabaseView ready={ready} db={db} sqlText={sqlText} setSqlText={setSqlText} runSql={runSql} sqlRows={sqlRows} />}
         {active === "admin" && (
           <DatabaseAdminView
@@ -638,7 +756,7 @@ export default function App() {
   );
 }
 
-function SetupView({ handles, configureFolder, importDatabase, loadDatabase, data, setupError, busy, ready }) {
+function SetupView({ handles, folderStatuses, configureFolder, importDatabase, loadDatabase, data, setupError, busy, ready }) {
   const requiredConfigured = FOLDERS.filter((folder) => folder.required).every((folder) => handles[folder.key]);
   return (
     <section className="section">
@@ -660,7 +778,7 @@ function SetupView({ handles, configureFolder, importDatabase, loadDatabase, dat
               <div className="label">{folder.required ? "Required" : "Optional"}</div>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", marginTop: 10 }}>
                 <strong>{folder.label}</strong>
-                <span className="pill">{handles[folder.key] ? "Configured" : "Missing"}</span>
+                <span className="pill">{folderStatusLabel(handles[folder.key], folderStatuses[folder.key])}</span>
               </div>
             </div>
             <div className="toolbar">
@@ -676,12 +794,19 @@ function SetupView({ handles, configureFolder, importDatabase, loadDatabase, dat
           {ready
             ? "ecm_register.db is open. Go to Dashboard or ECMs."
             : requiredConfigured
-              ? "All required folders are configured. Click Import Existing .db, then the app will load the dashboard."
+              ? "Required folders are remembered. Click Load Workspace after reopening the browser to restore permissions and load the database."
               : "Select the required folders first, then import your existing .db."}
         </span>
       </div>
     </section>
   );
+}
+
+function folderStatusLabel(handle, status) {
+  if (!handle) return "Missing";
+  if (status === "granted") return "Ready";
+  if (status === "denied") return "Blocked";
+  return "Remembered";
 }
 
 function DashboardView({ data, ready }) {
@@ -1032,8 +1157,19 @@ function MeetingsView({ ready, properties, form, setForm, save, loadMeetingFiles
             {meetingFiles.map((file) => <option key={file.name} value={file.name}>{file.name}</option>)}
           </select>
         </div>
-        <Field label="Existing monthly note editor">
-          <textarea value={meetingDraft} onChange={(e) => setMeetingDraft(e.target.value)} style={{ minHeight: 420 }} />
+        <Field label="Existing note - comments pre meeting">
+          <textarea
+            value={meetingDraft.pre || ""}
+            onChange={(e) => setMeetingDraft((prev) => ({ ...prev, pre: e.target.value }))}
+            style={{ minHeight: 170 }}
+          />
+        </Field>
+        <Field label="Existing note - comments post meeting">
+          <textarea
+            value={meetingDraft.post || ""}
+            onChange={(e) => setMeetingDraft((prev) => ({ ...prev, post: e.target.value }))}
+            style={{ minHeight: 170 }}
+          />
         </Field>
         <button className="btn primary" type="button" disabled={!selectedMeetingName} onClick={saveMeetingDraft}>Save Existing Note</button>
       </div>
@@ -1042,7 +1178,7 @@ function MeetingsView({ ready, properties, form, setForm, save, loadMeetingFiles
   );
 }
 
-function ReportsView({ ready, db, properties, selectedProperty, setSelectedPropertyId }) {
+function ReportsView({ ready, db, properties, selectedProperty, setSelectedPropertyId, importEcmReviewWorkbook, busy }) {
   if (!ready) return <EmptyState />;
   return (
     <section className="section">
@@ -1054,10 +1190,16 @@ function ReportsView({ ready, db, properties, selectedProperty, setSelectedPrope
           </select>
           <button className="btn primary" onClick={() => downloadExcelRegister(db, selectedProperty)}>Excel - Selected Property</button>
           <button className="btn" onClick={() => downloadExcelRegister(db, null)}>Excel - All Properties</button>
+          <button className="btn" onClick={() => downloadEcmReviewWorkbook(db, selectedProperty)}>ECM List Template - Selected</button>
+          <button className="btn" onClick={() => downloadEcmReviewWorkbook(db, null)}>ECM List Template - All</button>
+          <label className={`btn ${busy ? "disabled" : ""}`}>
+            {busy ? "Importing..." : "Import Reviewed ECM Workbook"}
+            <input type="file" accept=".xlsx" onChange={importEcmReviewWorkbook} disabled={busy} style={{ display: "none" }} />
+          </label>
           <button className="btn" onClick={() => downloadWordRegister(db, selectedProperty)}>Word - Selected Property</button>
           <button className="btn" onClick={() => downloadPdfRegister(db, selectedProperty)}>PDF - Selected Property</button>
         </div>
-        <p className="muted">Browser reports download locally. The PDF is a first-pass browser version of the Streamlit PDF report and will be tightened after visual review.</p>
+        <p className="muted">Exports download locally. The ECM list template is designed for Excel review and can be imported back using the stable ecm_id column.</p>
       </div>
     </section>
   );
@@ -1216,6 +1358,26 @@ function sumUsage(rows, propertyId, months, key) {
   return (rows || [])
     .filter((row) => row.property_id === propertyId && set.has(row.usage_month))
     .reduce((sum, row) => sum + Number(row[key] || 0), 0);
+}
+
+function stringOrExisting(value, existing = "") {
+  const text = String(value ?? "").trim();
+  return text ? text : existing;
+}
+
+function numberOrExisting(value, existing = null) {
+  if (value === "" || value === null || value === undefined) return existing;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : existing;
+}
+
+function approvedValue(value, existing = false) {
+  if (value === "" || value === null || value === undefined) return Boolean(existing);
+  if (typeof value === "boolean") return value;
+  const text = String(value).trim().toLowerCase();
+  if (["yes", "true", "1", "approved"].includes(text)) return true;
+  if (["no", "false", "0", "not approved"].includes(text)) return false;
+  return Boolean(existing);
 }
 
 function monthRange(endMonth, countBack) {

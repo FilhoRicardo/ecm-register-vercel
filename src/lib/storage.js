@@ -47,6 +47,15 @@ export async function ensurePermission(handle, mode = "readwrite") {
   return (await handle.requestPermission(opts)) === "granted";
 }
 
+export async function permissionState(handle, mode = "readwrite") {
+  if (!handle?.queryPermission) return "unknown";
+  try {
+    return await handle.queryPermission({ mode });
+  } catch {
+    return "unknown";
+  }
+}
+
 export async function writeFile(handle, content) {
   const writable = await handle.createWritable();
   await writable.write(content);

@@ -188,9 +188,42 @@ ${postMeeting || "_Add comments after the meeting._"}
 `;
 }
 
+export function extractMeetingSections(markdown = "") {
+  return {
+    pre: extractMarkdownSection(markdown, "Comments Pre Meeting"),
+    post: extractMarkdownSection(markdown, "Comments Post Meeting")
+  };
+}
+
+export function replaceMeetingSections(markdown = "", sections = {}) {
+  let next = replaceMarkdownSection(markdown, "Comments Pre Meeting", sections.pre || "");
+  next = replaceMarkdownSection(next, "Comments Post Meeting", sections.post || "");
+  return next;
+}
+
 function labelUtility(value) {
   if (value === "electricity") return "Electricity";
   if (value === "heating") return "Heating";
   if (value === "cooling") return "Cooling";
   return value || "";
+}
+
+function extractMarkdownSection(markdown, heading) {
+  const regex = new RegExp(`^## ${escapeRegExp(heading)}\\s*\\n([\\s\\S]*?)(?=^##\\s+|\\s*$)`, "m");
+  const match = String(markdown || "").match(regex);
+  if (!match) return "";
+  return match[1].trim().replace(/^_(Add comments (before|after) the meeting\\.)_$/i, "");
+}
+
+function replaceMarkdownSection(markdown, heading, body) {
+  const content = String(body || "").trim() || (heading.includes("Pre") ? "_Add comments before the meeting._" : "_Add comments after the meeting._");
+  const regex = new RegExp(`(^## ${escapeRegExp(heading)}\\s*\\n)([\\s\\S]*?)(?=^##\\s+|\\s*$)`, "m");
+  if (!regex.test(markdown)) {
+    return `${markdown.trim()}\n\n## ${heading}\n\n${content}\n`;
+  }
+  return markdown.replace(regex, `$1\n${content}\n\n`);
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

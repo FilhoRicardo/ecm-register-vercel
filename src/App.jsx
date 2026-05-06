@@ -1136,31 +1136,31 @@ function MeetingsView({ ready, properties, form, setForm, save, loadMeetingFiles
   return (
     <section className="section">
       <h3>Monthly Meeting Notes</h3>
-      <div className="grid two">
-      <div className="card">
-        <form onSubmit={save}>
+      <div className="grid two meeting-notes-grid">
+      <div className="card meeting-note-card">
+        <form className="meeting-note-form" onSubmit={save}>
           <div className="grid three">
             <Field label="Property"><select value={form.property_id} onChange={(e) => set("property_id", e.target.value)}>{properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
             <Field label="Report month"><input type="month" value={form.report_month} onChange={(e) => set("report_month", e.target.value)} /></Field>
             <Field label="Meeting date"><input type="date" value={form.meeting_date} onChange={(e) => set("meeting_date", e.target.value)} /></Field>
           </div>
-          <Field label="Comments pre meeting"><textarea value={form.pre} onChange={(e) => set("pre", e.target.value)} /></Field>
+          <Field label="Comments pre meeting" className="meeting-note-field"><textarea className="meeting-note-textarea" value={form.pre} onChange={(e) => set("pre", e.target.value)} /></Field>
           <button className="btn primary">Save Meeting Note to Obsidian</button>
         </form>
       </div>
-      <div className="card">
-        <div className="toolbar">
+      <div className="card meeting-note-card">
+        <div className="meeting-note-controls">
           <button className="btn" type="button" onClick={loadMeetingFiles}>Load Existing Notes</button>
           <select className="input" value={selectedMeetingName} onChange={(e) => selectMeeting(e.target.value)}>
             <option value="">Select note...</option>
             {meetingFiles.map((file) => <option key={file.name} value={file.name}>{file.name}</option>)}
           </select>
         </div>
-        <Field label="Existing note - comments post meeting">
+        <Field label="Existing note - comments post meeting" className="meeting-note-field">
           <textarea
+            className="meeting-note-textarea"
             value={meetingDraft.post || ""}
             onChange={(e) => setMeetingDraft((prev) => ({ ...prev, post: e.target.value }))}
-            style={{ minHeight: 320 }}
           />
         </Field>
         <button className="btn primary" type="button" disabled={!selectedMeetingName} onClick={saveMeetingDraft}>Save Existing Note</button>
@@ -1290,8 +1290,8 @@ function CompactTable({ rows, columns, onEdit, onRemove }) {
   );
 }
 
-function Field({ label, children }) {
-  return <div className="field"><label>{label}</label>{children}</div>;
+function Field({ label, children, className = "" }) {
+  return <div className={`field ${className}`.trim()}><label>{label}</label>{children}</div>;
 }
 
 function EmptyState() {

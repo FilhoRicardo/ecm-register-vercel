@@ -178,6 +178,38 @@ select option {
   box-shadow: 0 0 0 3px rgba(124,58,237,0.12);
 }
 .field textarea { min-height: 92px; resize: vertical; line-height: 1.48; }
+.meeting-notes-grid { align-items: stretch; }
+.meeting-note-card {
+  min-height: calc(100vh - 220px);
+  display: flex;
+  flex-direction: column;
+}
+.meeting-note-form {
+  display: flex;
+  flex: 1;
+  min-height: 100%;
+  flex-direction: column;
+}
+.meeting-note-field {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+.meeting-note-field textarea,
+.meeting-note-textarea {
+  flex: 1;
+  height: clamp(520px, 62vh, 780px);
+  min-height: clamp(520px, 62vh, 780px);
+}
+.meeting-note-controls {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  margin: 0 0 14px;
+}
+.meeting-note-controls .input { width: 100%; }
 table {
   width: 100%;
   border-collapse: collapse;
@@ -218,4 +250,8 @@ tr:hover td { background: rgba(124,58,237,0.055); }
   .sidebar { display: none; }
   .hero { flex-direction: column; }
   .grid.two, .grid.three, .grid.four { grid-template-columns: 1fr; }
+  .meeting-note-card { min-height: auto; }
+  .meeting-note-controls { grid-template-columns: 1fr; }
+  .meeting-note-field textarea,
+  .meeting-note-textarea { min-height: 420px; }
 }

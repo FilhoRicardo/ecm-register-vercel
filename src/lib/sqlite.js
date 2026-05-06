@@ -52,8 +52,8 @@ function one(db, sql, params = []) {
 export function getPortfolio(db) {
   const properties = rows(db, "SELECT * FROM properties ORDER BY name");
   const ecms = getEcms(db);
-  const implementedSavings = rows(db, "SELECT * FROM ecm_measured_savings");
-  const monthlyUsage = rows(db, "SELECT * FROM monthly_utility_usage");
+  const implementedSavings = getImplementedSavings(db);
+  const monthlyUsage = getMonthlyUsage(db);
   const tenants = getTenants(db);
   const equipment = getEquipment(db);
   return { properties, ecms, implementedSavings, monthlyUsage, tenants, equipment };

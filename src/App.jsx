@@ -201,7 +201,8 @@ export default function App() {
       const handle = handles[key];
       if (!handle) return configureFolder(key);
       const granted = await ensurePermission(handle, "readwrite");
-      setFolderStatuses((prev) => ({ ...prev, [key]: granted ? "granted" : "prompt" }));
+      const status = granted ? "granted" : await permissionState(handle, "readwrite");
+      setFolderStatuses((prev) => ({ ...prev, [key]: status }));
       notify(granted ? "Folder permission restored." : "Folder permission was not granted.");
     } catch (error) {
       setSetupError(error.message || String(error));
@@ -501,12 +502,18 @@ export default function App() {
     const performance = rollingPerformance(data.monthlyUsage, property?.id, meetingForm.report_month);
     const openEcms = data.ecms.filter((ecm) => ecm.property_id === property?.id && ecm.status === "Open");
     const filename = meetingFilename(property, meetingForm.report_month);
+    const existingFiles = await listMarkdownFiles(handles.meetingNotes);
+    const existing = existingFiles.find((file) => file.name === filename);
+    const existingSections = existing ? extractMeetingSections(existing.text) : null;
+    if (existing && !window.confirm(`A meeting note named "${filename}" already exists. Update the pre-meeting section and keep the existing post-meeting comments?`)) {
+      return;
+    }
     const md = buildMeetingMarkdown({
       property,
       reportMonth: meetingForm.report_month,
       meetingDate: meetingForm.meeting_date,
       preMeeting: meetingForm.pre,
-      postMeeting: "",
+      postMeeting: existingSections?.post || "",
       performance,
       openEcms
     });
@@ -636,6 +643,11 @@ export default function App() {
       </aside>
 
       <main className="main">
+        <div className="mobile-nav">
+          <select className="input" value={active} onChange={(event) => setActive(event.target.value)}>
+            {NAV.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          </select>
+        </div>
         <div className="hero">
           <div>
             <span className="eyebrow">TODAY ENERGY CONTROL</span>

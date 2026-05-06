@@ -465,17 +465,18 @@ function chunks(rows, size) {
 async function getReportTemplateAssets() {
   if (reportTemplateAssets) return reportTemplateAssets;
   const [cover, page, logo] = await Promise.all([
-    assetDataUrl(reportTemplateCoverUrl),
-    assetDataUrl(reportTemplatePageUrl),
-    assetDataUrl(savillsLogoUrl)
+    assetDataUrl(reportTemplateCoverUrl, "PPTX cover background", true),
+    assetDataUrl(reportTemplatePageUrl, "PPTX page background", true),
+    assetDataUrl(savillsLogoUrl, "Savills logo", false)
   ]);
   reportTemplateAssets = { cover, page, logo };
   return reportTemplateAssets;
 }
 
-async function assetDataUrl(url) {
+async function assetDataUrl(url, label, required = false) {
   try {
     const response = await fetch(url);
+    if (!response.ok) throw new Error(`${label} returned HTTP ${response.status}`);
     const blob = await response.blob();
     return await new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -483,7 +484,8 @@ async function assetDataUrl(url) {
       reader.onerror = () => reject(reader.error);
       reader.readAsDataURL(blob);
     });
-  } catch {
+  } catch (error) {
+    if (required) throw new Error(`${label} failed to load. The PPTX report template assets are missing or unavailable.`);
     return null;
   }
 }

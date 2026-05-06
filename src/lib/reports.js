@@ -1,7 +1,8 @@
 import ExcelJS from "exceljs/dist/exceljs.min.js";
-import { jsPDF } from "jspdf";
-import { Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType } from "docx";
-import reportBackgroundUrl from "../assets/report-background.jpg";
+import pptxgen from "pptxgenjs";
+import reportTemplateCoverUrl from "../assets/report-template-cover.jpeg";
+import reportTemplatePageUrl from "../assets/report-template-page.jpeg";
+import savillsLogoUrl from "../assets/savills-logo.svg";
 import { downloadBlob } from "./storage.js";
 import { kwh, money, slug } from "./format.js";
 import { getEcms, getEquipment, getImplementedSavings, getProperties, getTenants } from "./sqlite.js";
@@ -59,10 +60,14 @@ const EXCEL_REGISTER_HEADERS = [
 const STATUS_OPTIONS = ["Open", "Approved", "In Progress", "Implemented", "Rejected", "On Hold"];
 const UTILITY_OPTIONS = ["electricity", "heating", "cooling"];
 const REVIEW_DECISIONS = ["Keep", "Update", "Reject", "Implemented", "Needs discussion"];
-const PDF_GREEN = [24, 74, 44];
-const PDF_LIGHT_GREEN = [239, 247, 242];
-const PDF_BORDER = [188, 207, 196];
-let reportBackgroundDataUrl = null;
+const PPT_W = 7.5;
+const PPT_H = 10.83;
+const PPT_DARK = "184A2C";
+const PPT_MUTED = "5E755E";
+const PPT_LIGHT = "EFF6F0";
+const PPT_BORDER = "BACBBE";
+const PPT_RED = "CE181E";
+let reportTemplateAssets = null;
 
 export async function downloadExcelRegister(db, property = null) {
   const workbook = new ExcelJS.Workbook();
@@ -183,38 +188,9 @@ export async function parseEcmReviewWorkbook(file) {
   return rows;
 }
 
-export async function downloadWordRegister(db, property) {
-  const ecms = getEcms(db, property?.id || null);
-  const rows = [
-    tableRow(["Ref", "ECM", "Status", "Utility", "Saving EUR/a"], true),
-    ...ecms.map((ecm) => tableRow([ecm.ref, ecm.title, ecm.status, ecm.utility_type, `EUR ${money(ecm.annual_saving_eur)}`]))
-  ];
-
-  const children = [
-    heading(`${property?.name || "All Properties"} ECM Register`),
-    para(`Generated ${new Date().toLocaleString()}`),
-    new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows }),
-    ...ecms.flatMap((ecm) => [
-      heading(`${ecm.ref} - ${ecm.title}`, 2),
-      para(`Status: ${ecm.status}`),
-      para(`Utility: ${ecm.utility_type}`),
-      para(`Energy saving: ${kwh(ecm.energy_saving_kwh)} kWh/a`),
-      para(`Annual saving: EUR ${money(ecm.annual_saving_eur)}/a`),
-      para(`What & why: ${ecm.what_why || "Not stated."}`),
-      para(`Pitfall: ${ecm.pitfall || "Not stated in source."}`),
-      para(`Action: ${ecm.action || "Not stated."}`)
-    ])
-  ];
-
-  const doc = new Document({ sections: [{ children }] });
-  const blob = await Packer.toBlob(doc);
-  downloadBlob(blob, `${slug(property?.name || "All_Properties")}_ECM_Register.docx`);
-}
-
-export async function downloadPdfRegister(db, property) {
+export async function downloadPptxRegister(db, property) {
   if (!property) return;
-  const background = await getReportBackground();
-
+  const assets = await getReportTemplateAssets();
   const ecms = getEcms(db, property.id);
   const tenants = getTenants(db).filter((row) => row.property_id === property.id);
   const equipment = getEquipment(db).filter((row) => row.property_id === property.id);
@@ -227,68 +203,82 @@ export async function downloadPdfRegister(db, property) {
     measuredCost: sum(savings, "cost_saving_eur")
   };
 
-  const doc = new jsPDF({ unit: "pt", format: "a4" });
-  const page = {
-    width: doc.internal.pageSize.getWidth(),
-    height: doc.internal.pageSize.getHeight(),
-    left: 64,
-    right: 64,
-    top: 82,
-    bottom: 82
-  };
-  const panel = { x: 42, y: 42, width: page.width - 84, height: page.height - 84 };
-  let y = page.top;
-
-  const drawBackground = () => {
-    if (background) {
-      doc.addImage(background, "JPEG", 0, 0, page.width, page.height);
-    }
+  const pptx = new pptxgen();
+  pptx.defineLayout({ name: "SAVILLS_A4_PORTRAIT", width: PPT_W, height: PPT_H });
+  pptx.layout = "SAVILLS_A4_PORTRAIT";
+  pptx.author = "ECM Register";
+  pptx.company = "Savills";
+  pptx.subject = "Energy Conservation Measure Register";
+  pptx.title = `${property.name} ECM Register`;
+  pptx.lang = "en-GB";
+  pptx.theme = {
+    headFontFace: "Arial",
+    bodyFontFace: "Arial",
+    lang: "en-GB"
   };
 
-  const drawContentPanel = () => {
-    doc.setFillColor(255, 255, 255);
-    doc.setDrawColor(...PDF_BORDER);
-    doc.rect(panel.x, panel.y, panel.width, panel.height, "FD");
-  };
+  let pageNo = 1;
+  addCoverSlide(pptx, assets, property);
+  pageNo += 1;
+  addBuildingSummaryPptSlide(pptx, assets, pageNo, property, tenants, equipment, ecms, totals);
+  pageNo += 1;
 
-  const canvas = (withPanel = true) => {
-    drawBackground();
-    if (withPanel) drawContentPanel();
-    doc.setFillColor(255, 255, 255);
-    doc.setDrawColor(...PDF_BORDER);
-    doc.roundedRect(page.left - 8, 48, 112, 18, 3, 3, "FD");
-    doc.roundedRect(page.width - page.right - 42, page.height - 58, 50, 18, 3, 3, "FD");
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8);
-    doc.setTextColor(...PDF_GREEN);
-    doc.text("Savills sustainability", page.left, 60);
-    doc.text(`Page ${doc.internal.getNumberOfPages()}`, page.width - page.right, page.height - 46, { align: "right" });
-  };
+  for (const chunk of chunks(ecms, 12)) {
+    addEcmSummaryPptSlide(pptx, assets, pageNo, property, chunk, ecms.length);
+    pageNo += 1;
+  }
 
-  const addPage = () => {
-    doc.addPage();
-    y = page.top;
-    canvas(true);
-  };
+  ecms.forEach((ecm, index) => {
+    addEcmDetailPptSlide(pptx, assets, pageNo, ecm, savings.filter((saving) => Number(saving.ecm_id) === Number(ecm.id)), index + 1, ecms.length);
+    pageNo += 1;
+  });
 
-  canvas(false);
-  doc.setFillColor(255, 255, 255);
-  doc.setDrawColor(...PDF_BORDER);
-  doc.roundedRect(76, 244, page.width - 152, 132, 6, 6, "FD");
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(21);
-  doc.setTextColor(...PDF_GREEN);
-  doc.text("Energy Conservation Measure Register", page.width / 2, 300, { align: "center" });
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(11);
-  doc.setTextColor(...PDF_GREEN);
-  doc.text(cleanPdfText(property.name), page.width / 2, 324, { align: "center" });
-  doc.text(cleanPdfText(property.address || ""), page.width / 2, 343, { align: "center" });
+  addContactSlide(pptx, assets, pageNo);
+  const blob = await pptx.write({ outputType: "blob" });
+  downloadBlob(blob, `${slug(property.name)}_ECM_Register.pptx`);
+}
 
-  addPage();
-  pdfHeading(doc, "Building Summary", page.left, y);
-  y += 22;
-  y = pdfKeyValueTable(doc, page, y, [
+function addCoverSlide(pptx, assets, property) {
+  const slide = pptx.addSlide();
+  slide.addImage({ data: assets.cover, x: 0, y: 0, w: PPT_W, h: PPT_H });
+  addLogo(slide, assets.logo, 6.42, 9.78, 0.7, 0.7);
+  const now = new Date();
+  slide.addText(now.toLocaleDateString("en-GB", { day: "numeric", month: "long" }), {
+    x: 0.88, y: 1.26, w: 1.55, h: 0.18, fontFace: "Arial", fontSize: 7, color: PPT_DARK, bold: true
+  });
+  slide.addText(String(now.getFullYear()), {
+    x: 0.88, y: 1.53, w: 1.55, h: 0.18, fontFace: "Arial", fontSize: 7, color: PPT_DARK, bold: true
+  });
+  slide.addText("Energy Conservation Measure Register", {
+    x: 0.88, y: 3.78, w: 5.25, h: 0.75, fontFace: "Arial", fontSize: 23, color: PPT_DARK, bold: true,
+    fit: "shrink"
+  });
+  slide.addText(cleanReportText(property.name), {
+    x: 0.88, y: 4.52, w: 5.2, h: 0.35, fontFace: "Arial", fontSize: 12, color: PPT_MUTED, bold: true,
+    fit: "shrink"
+  });
+  slide.addText(cleanReportText(property.address || ""), {
+    x: 0.88, y: 4.9, w: 5.2, h: 0.28, fontFace: "Arial", fontSize: 9, color: PPT_MUTED,
+    fit: "shrink"
+  });
+  slide.addText("PREPARED FOR", {
+    x: 0.88, y: 5.48, w: 1.8, h: 0.16, fontFace: "Arial", fontSize: 6.5, color: PPT_DARK, bold: true,
+    charSpace: 0.7
+  });
+  slide.addText("Union Energy Monitoring", {
+    x: 0.88, y: 5.82, w: 2.7, h: 0.24, fontFace: "Arial", fontSize: 10, color: PPT_DARK, bold: true
+  });
+}
+
+function addBuildingSummaryPptSlide(pptx, assets, pageNo, property, tenants, equipment, ecms, totals) {
+  const slide = addContentSlide(pptx, assets, pageNo, "Building Summary");
+  addMetricRow(slide, 1.62, [
+    ["ECMs", ecms.length],
+    ["Open", ecms.filter((ecm) => ecm.status === "Open").length],
+    ["Implemented", ecms.filter((ecm) => ecm.status === "Implemented").length],
+    ["Annual saving", `EUR ${money(totals.annualSaving)}`]
+  ]);
+  addKeyValuePptTable(slide, 0.42, 2.55, 6.28, [
     ["Name", property.name],
     ["Address", property.address],
     ["Total floor area", `${kwh(property.total_floor_area)} m2`],
@@ -297,91 +287,205 @@ export async function downloadPdfRegister(db, property) {
     ["Cooling cost", `EUR ${Number(property.cooling_cost_eur_per_kwh || 0).toFixed(4)}/kWh`],
     ["Registered tenant areas", tenants.length],
     ["Registered equipment", equipment.length],
-    ["Registered ECMs", ecms.length],
     ["Total ECM energy saving", `${kwh(totals.energySaving)} kWh/a`],
-    ["Total ECM annual saving", `EUR ${money(totals.annualSaving)}`],
     ["Total ECM investment", `EUR ${money(totals.investment)}`],
     ["Measured implemented energy saving", `${kwh(totals.measuredEnergy)} kWh`],
     ["Measured implemented cost saving", `EUR ${money(totals.measuredCost)}`]
-  ], addPage);
+  ]);
+}
 
-  y += 14;
-  pdfHeading(doc, "ECM Summary", page.left, y);
-  y += 20;
-  y = pdfTable(doc, page, y, ["Ref", "ECM", "Status", "Utility", "Energy saving", "Annual saving"], ecms.map((ecm) => [
-    ecm.ref,
-    ecm.title,
-    ecm.status,
-    ecm.utility_type,
-    `${kwh(ecm.energy_saving_kwh)} kWh`,
-    `EUR ${money(ecm.annual_saving_eur)}`
-  ]), [76, 150, 56, 54, 66, 65], addPage);
+function addEcmSummaryPptSlide(pptx, assets, pageNo, property, ecms, totalCount) {
+  const slide = addContentSlide(pptx, assets, pageNo, `ECM Summary - ${property.name}`);
+  slide.addText(`${ecms.length} of ${totalCount} ECMs shown on this slide`, {
+    x: 0.42, y: 1.42, w: 4.7, h: 0.18, fontFace: "Arial", fontSize: 7.5, color: PPT_MUTED
+  });
+  addPptTable(slide, 0.42, 1.78, 6.55, [
+    ["Ref", "ECM", "Status", "Utility", "Saving"],
+    ...ecms.map((ecm) => [
+      ecm.ref,
+      truncate(ecm.title, 82),
+      ecm.status,
+      ecm.utility_type,
+      `EUR ${money(ecm.annual_saving_eur)}`
+    ])
+  ], [1.1, 2.7, 0.9, 0.85, 1.0], 0.34, 7);
+}
 
-  if (savings.length) {
-    y += 14;
-    pdfHeading(doc, "Implemented Savings Recorded", page.left, y);
-    y += 20;
-    y = pdfTable(doc, page, y, ["Ref", "ECM", "Utility", "Start", "End", "Measured kWh", "Measured EUR"], savings.map((saving) => [
-      saving.ref,
-      saving.ecm_title,
-      saving.utility_type,
-      saving.start_date,
-      saving.end_date,
-      `${kwh(saving.energy_saving_kwh)} kWh`,
-      `EUR ${money(saving.cost_saving_eur)}`
-    ]), [66, 112, 52, 60, 60, 60, 57], addPage);
-  }
+function addEcmDetailPptSlide(pptx, assets, pageNo, ecm, ecmSavings, index, totalCount) {
+  const slide = addContentSlide(pptx, assets, pageNo, `ECM ${index} of ${totalCount}`);
+  slide.addText(cleanReportText(`${ecm.ref} - ${ecm.title}`), {
+    x: 0.42, y: 1.35, w: 6.45, h: 0.42, fontFace: "Arial", fontSize: 10, color: PPT_DARK, bold: true,
+    fit: "shrink"
+  });
+  addKeyValuePptTable(slide, 0.42, 1.95, 6.45, [
+    ["Status", ecm.status],
+    ["Approved", ecm.approved ? "Yes" : "No"],
+    ["Utility impacted", ecm.utility_type],
+    ["Investment", `EUR ${money(ecm.investment_eur || 0)}`],
+    ["Energy saving", `${kwh(ecm.energy_saving_kwh)} kWh/a`],
+    ["Annual saving", `EUR ${money(ecm.annual_saving_eur)}`],
+    ["Simple payback", simplePayback(ecm) ? `${simplePayback(ecm).toFixed(1)} years` : "-"]
+  ], 0.24, 7.2);
 
-  ecms.forEach((ecm, index) => {
-    addPage();
-    pdfHeading(doc, `ECM ${index + 1} of ${ecms.length}`, page.left, y);
-    y += 22;
-    pdfHeading(doc, `${ecm.ref} - ${ecm.title}`, page.left, y, 11);
-    y += 24;
-    y = pdfKeyValueTable(doc, page, y, [
-      ["Status", ecm.status],
-      ["Approved", ecm.approved ? "Yes" : "No"],
-      ["Utility impacted", ecm.utility_type],
-      ["Investment", `EUR ${money(ecm.investment_eur || 0)}`],
-      ["Energy saving", `${kwh(ecm.energy_saving_kwh)} kWh/a`],
-      ["Annual saving", `EUR ${money(ecm.annual_saving_eur)}`],
-      ["Simple payback", simplePayback(ecm) ? `${simplePayback(ecm).toFixed(1)} years` : "-"]
-    ], addPage);
-    y += 10;
+  let y = 4.05;
+  y = addTextSection(slide, "What & why", ecm.what_why, y, 0.82);
+  y = addTextSection(slide, "Pitfall", ecm.pitfall, y, 0.58);
+  y = addTextSection(slide, "Action", ecm.action, y, 0.7);
 
-    for (const [label, value] of [["What & why", ecm.what_why], ["Pitfall", ecm.pitfall], ["Action", ecm.action]]) {
-      if (!String(value || "").trim()) continue;
-      if (y + 60 > page.height - page.bottom) addPage();
-      pdfHeading(doc, label, page.left, y, 11);
-      y += 17;
-      y = pdfParagraph(doc, page, y, value, addPage);
-      y += 8;
-    }
-
-    const ecmSavings = savings.filter((saving) => Number(saving.ecm_id) === Number(ecm.id));
-    if (ecmSavings.length) {
-      if (y + 90 > page.height - page.bottom) addPage();
-      pdfHeading(doc, "Measured implemented savings", page.left, y, 11);
-      y += 18;
-      y = pdfTable(doc, page, y, ["Start", "End", "Measured kWh", "Unit cost", "Measured EUR"], ecmSavings.map((saving) => [
+  if (ecmSavings.length) {
+    slide.addText("Measured implemented savings", {
+      x: 0.42, y, w: 4.5, h: 0.18, fontFace: "Arial", fontSize: 8.5, color: PPT_DARK, bold: true
+    });
+    y += 0.25;
+    addPptTable(slide, 0.42, y, 6.45, [
+      ["Start", "End", "kWh", "Unit cost", "EUR"],
+      ...ecmSavings.slice(0, 4).map((saving) => [
         saving.start_date,
         saving.end_date,
-        `${kwh(saving.energy_saving_kwh)} kWh`,
+        kwh(saving.energy_saving_kwh),
         `EUR ${Number(saving.unit_cost_eur_per_kwh || 0).toFixed(4)}/kWh`,
         `EUR ${money(saving.cost_saving_eur)}`
-      ]), [75, 75, 100, 95, 122], addPage);
-      for (const saving of ecmSavings) {
-        if (!String(saving.notes || "").trim()) continue;
-        y += 8;
-        if (y + 40 > page.height - page.bottom) addPage();
-        pdfHeading(doc, "Measured notes", page.left, y, 10);
-        y += 15;
-        y = pdfParagraph(doc, page, y, saving.notes, addPage);
-      }
-    }
-  });
+      ])
+    ], [0.95, 0.95, 1.1, 1.55, 1.9], 0.28, 6.5);
+    const notes = ecmSavings.map((saving) => saving.notes).filter(Boolean).join(" ");
+    if (notes) addTextSection(slide, "Measured notes", notes, y + 1.42, 0.58, 120);
+  }
+}
 
-  doc.save(`${slug(property.name)}_ECM_Register.pdf`);
+function addContactSlide(pptx, assets, pageNo) {
+  const slide = pptx.addSlide();
+  slide.addImage({ data: assets.cover, x: 0, y: 0, w: PPT_W, h: PPT_H });
+  addLogo(slide, assets.logo, 6.32, 0.7, 0.7, 0.7);
+  addFooter(slide, pageNo);
+  slide.addText("Contacts", {
+    x: 0.4, y: 6.4, w: 4.98, h: 0.5, fontFace: "Arial", fontSize: 18, bold: true, color: PPT_DARK
+  });
+  slide.addText("Ricardo Filho\nAssociate Director\nRicardo.filho@savills.ie", {
+    x: 0.4, y: 7.33, w: 2.45, h: 1.25, fontFace: "Arial", fontSize: 9, color: PPT_DARK,
+    breakLine: false, fit: "shrink"
+  });
+}
+
+function addContentSlide(pptx, assets, pageNo, title) {
+  const slide = pptx.addSlide();
+  slide.addImage({ data: assets.page, x: 0, y: 0, w: PPT_W, h: PPT_H });
+  addLogo(slide, assets.logo, 6.32, 0.7, 0.7, 0.7);
+  slide.addText(cleanReportText(title), {
+    x: 0.4, y: 1.04, w: 6.4, h: 0.38, fontFace: "Arial", fontSize: 15, bold: true, color: PPT_DARK,
+    fit: "shrink"
+  });
+  addFooter(slide, pageNo);
+  return slide;
+}
+
+function addFooter(slide, pageNo) {
+  slide.addText("Energy monitoring", {
+    x: 0.4, y: 10.58, w: 2.2, h: 0.16, fontFace: "Arial", fontSize: 6.5, bold: true, color: PPT_DARK
+  });
+  slide.addText(String(pageNo), {
+    x: 5.62, y: 10.39, w: 1.7, h: 0.12, fontFace: "Arial", fontSize: 5.5, color: PPT_DARK, align: "right"
+  });
+}
+
+function addLogo(slide, logo, x, y, w, h) {
+  if (logo) slide.addImage({ data: logo, x, y, w, h });
+}
+
+function addMetricRow(slide, y, metrics) {
+  const gap = 0.12;
+  const w = (6.45 - gap * (metrics.length - 1)) / metrics.length;
+  metrics.forEach(([label, value], index) => {
+    const x = 0.42 + index * (w + gap);
+    slide.addShape("rect", {
+      x, y, w, h: 0.62,
+      fill: { color: "FFFFFF", transparency: 8 },
+      line: { color: PPT_BORDER, pt: 0.6 }
+    });
+    slide.addText(cleanReportText(label), {
+      x: x + 0.08, y: y + 0.09, w: w - 0.16, h: 0.13, fontFace: "Arial", fontSize: 5.8, color: PPT_MUTED, bold: true,
+      fit: "shrink"
+    });
+    slide.addText(cleanReportText(value), {
+      x: x + 0.08, y: y + 0.28, w: w - 0.16, h: 0.24, fontFace: "Arial", fontSize: 12.5, color: PPT_DARK, bold: true,
+      fit: "shrink"
+    });
+  });
+}
+
+function addKeyValuePptTable(slide, x, y, w, rows, rowH = 0.27, fontSize = 7) {
+  addPptTable(slide, x, y, w, rows.map(([label, value]) => [label, value]), [1.95, w - 1.95], rowH, fontSize, { firstColBold: true });
+}
+
+function addPptTable(slide, x, y, w, rows, colW, rowH = 0.3, fontSize = 7, options = {}) {
+  const body = rows.map((row, rowIndex) => row.map((value, colIndex) => ({
+    text: cleanReportText(value || "-"),
+    options: {
+      color: PPT_DARK,
+      bold: rowIndex === 0 || (options.firstColBold && colIndex === 0),
+      fill: { color: rowIndex === 0 || (options.firstColBold && colIndex === 0) ? PPT_LIGHT : "FFFFFF", transparency: 5 },
+      valign: "mid",
+      margin: 0.04
+    }
+  })));
+  slide.addTable(body, {
+    x, y, w,
+    h: Math.max(rowH * rows.length, rowH),
+    colW,
+    fontFace: "Arial",
+    fontSize,
+    color: PPT_DARK,
+    margin: 0.04,
+    border: { type: "solid", color: PPT_BORDER, pt: 0.5 },
+    valign: "mid"
+  });
+}
+
+function addTextSection(slide, title, value, y, h, limit = 240) {
+  slide.addText(title, {
+    x: 0.42, y, w: 4.5, h: 0.18, fontFace: "Arial", fontSize: 8.5, color: PPT_DARK, bold: true
+  });
+  slide.addText(truncate(cleanReportText(value || "-"), limit), {
+    x: 0.42, y: y + 0.23, w: 6.45, h, fontFace: "Arial", fontSize: 6.8, color: PPT_DARK,
+    breakLine: false, fit: "shrink", valign: "top"
+  });
+  return y + h + 0.42;
+}
+
+function truncate(value, limit) {
+  const text = cleanReportText(value);
+  return text.length > limit ? `${text.slice(0, Math.max(0, limit - 1)).trim()}...` : text;
+}
+
+function chunks(rows, size) {
+  const out = [];
+  for (let i = 0; i < rows.length; i += size) out.push(rows.slice(i, i + size));
+  return out.length ? out : [[]];
+}
+
+async function getReportTemplateAssets() {
+  if (reportTemplateAssets) return reportTemplateAssets;
+  const [cover, page, logo] = await Promise.all([
+    assetDataUrl(reportTemplateCoverUrl),
+    assetDataUrl(reportTemplatePageUrl),
+    assetDataUrl(savillsLogoUrl)
+  ]);
+  reportTemplateAssets = { cover, page, logo };
+  return reportTemplateAssets;
+}
+
+async function assetDataUrl(url) {
+  try {
+    const response = await fetch(url);
+    const blob = await response.blob();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
 }
 
 function styleExcelRegister(worksheet) {
@@ -504,132 +608,6 @@ function addReviewInstructions(workbook) {
   }
 }
 
-function pdfHeading(doc, text, x, y, size = 14) {
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(size);
-  doc.setTextColor(...PDF_GREEN);
-  doc.text(cleanPdfText(text), x, y);
-}
-
-function pdfParagraph(doc, page, y, value, addPage) {
-  const text = cleanPdfText(value || "-");
-  const availableWidth = page.width - page.left - page.right;
-  const lines = doc.splitTextToSize(text, availableWidth);
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(8.5);
-  doc.setTextColor(...PDF_GREEN);
-  for (const line of lines) {
-    if (y + 12 > page.height - page.bottom) {
-      addPage();
-      y = page.top;
-    }
-    doc.text(line, page.left, y);
-    y += 11;
-  }
-  return y + 4;
-}
-
-function pdfKeyValueTable(doc, page, y, rows, addPage) {
-  const labelWidth = 170;
-  const valueWidth = page.width - page.left - page.right - labelWidth;
-  for (const [label, value] of rows) {
-    const labelLines = doc.splitTextToSize(cleanPdfText(label), labelWidth - 14);
-    const valueLines = doc.splitTextToSize(cleanPdfText(value || "-"), valueWidth - 14);
-    const height = Math.max(labelLines.length, valueLines.length) * 11 + 10;
-    if (y + height > page.height - page.bottom) {
-      addPage();
-      y = page.top;
-    }
-    doc.setDrawColor(...PDF_BORDER);
-    doc.setFillColor(...PDF_LIGHT_GREEN);
-    doc.rect(page.left, y, labelWidth, height, "FD");
-    doc.rect(page.left + labelWidth, y, valueWidth, height, "S");
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(8.5);
-    doc.setTextColor(...PDF_GREEN);
-    doc.text(labelLines, page.left + 7, y + 14);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(...PDF_GREEN);
-    doc.text(valueLines, page.left + labelWidth + 7, y + 14);
-    y += height;
-  }
-  return y;
-}
-
-function pdfTable(doc, page, y, headers, rows, widths, addPage) {
-  widths = fitTableWidths(widths, page.width - page.left - page.right);
-  const headerHeight = 22;
-  const drawHeader = () => {
-    doc.setFillColor(...PDF_LIGHT_GREEN);
-    doc.setDrawColor(...PDF_BORDER);
-    let x = page.left;
-    headers.forEach((header, index) => {
-      doc.rect(x, y, widths[index], headerHeight, "FD");
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(7);
-      doc.setTextColor(...PDF_GREEN);
-      doc.text(doc.splitTextToSize(cleanPdfText(header), widths[index] - 8), x + 4, y + 13);
-      x += widths[index];
-    });
-    y += headerHeight;
-  };
-  if (y + headerHeight > page.height - page.bottom) {
-    addPage();
-    y = page.top;
-  }
-  drawHeader();
-
-  for (const row of rows.length ? rows : [headers.map(() => "")]) {
-    const cellLines = row.map((value, index) => doc.splitTextToSize(cleanPdfText(value || "-"), widths[index] - 8));
-    const height = Math.max(...cellLines.map((lines) => lines.length)) * 8.2 + 10;
-    if (y + height > page.height - page.bottom) {
-      addPage();
-      y = page.top;
-      drawHeader();
-    }
-    let x = page.left;
-    cellLines.forEach((lines, index) => {
-      doc.setDrawColor(...PDF_BORDER);
-      doc.rect(x, y, widths[index], height, "S");
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(6.8);
-      doc.setTextColor(...PDF_GREEN);
-      doc.text(lines, x + 4, y + 12);
-      x += widths[index];
-    });
-    y += height;
-  }
-  return y;
-}
-
-function fitTableWidths(widths, maxWidth) {
-  const total = widths.reduce((sum, width) => sum + width, 0);
-  if (total <= maxWidth) return widths;
-  const scaled = widths.map((width) => Math.floor(width * (maxWidth / total)));
-  const remainder = maxWidth - scaled.reduce((sum, width) => sum + width, 0);
-  scaled[scaled.length - 1] += remainder;
-  return scaled;
-}
-
-function heading(text, level = 1) {
-  return new Paragraph({
-    spacing: { after: level === 1 ? 260 : 160, before: level === 1 ? 0 : 260 },
-    children: [new TextRun({ text, bold: true, size: level === 1 ? 34 : 26 })]
-  });
-}
-
-function para(text) {
-  return new Paragraph({ spacing: { after: 120 }, children: [new TextRun(String(text || ""))] });
-}
-
-function tableRow(values, header = false) {
-  return new TableRow({
-    children: values.map((value) => new TableCell({
-      children: [new Paragraph({ children: [new TextRun({ text: String(value ?? ""), bold: header })] })]
-    }))
-  });
-}
-
 function propertyLabelForExport(prop) {
   const code = propertyCodeFromNotes(prop.notes);
   return code ? `${prop.name} (${code})` : prop.name;
@@ -700,24 +678,7 @@ function sum(rows, key) {
   return rows.reduce((total, row) => total + Number(row[key] || 0), 0);
 }
 
-async function getReportBackground() {
-  if (reportBackgroundDataUrl) return reportBackgroundDataUrl;
-  try {
-    const response = await fetch(reportBackgroundUrl);
-    const blob = await response.blob();
-    reportBackgroundDataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(blob);
-    });
-    return reportBackgroundDataUrl;
-  } catch {
-    return null;
-  }
-}
-
-function cleanPdfText(value) {
+function cleanReportText(value) {
   return String(value ?? "")
     .replace(/[\u20ac]/g, "EUR")
     .replace(/[\u2192]/g, "->")

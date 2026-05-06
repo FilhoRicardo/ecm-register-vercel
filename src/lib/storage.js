@@ -42,9 +42,13 @@ export async function idbDel(key) {
 
 export async function ensurePermission(handle, mode = "readwrite") {
   if (!handle) return false;
-  const opts = { mode };
-  if ((await handle.queryPermission(opts)) === "granted") return true;
-  return (await handle.requestPermission(opts)) === "granted";
+  try {
+    const opts = { mode };
+    if ((await handle.queryPermission(opts)) === "granted") return true;
+    return (await handle.requestPermission(opts)) === "granted";
+  } catch {
+    return false;
+  }
 }
 
 export async function permissionState(handle, mode = "readwrite") {

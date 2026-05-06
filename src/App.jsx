@@ -32,7 +32,7 @@ import {
 import { downloadBlob, ensurePermission, idbGet, idbSet, permissionState, supportsFileSystemAccess, writeFile } from "./lib/storage.js";
 import { listMarkdownFiles, routeCalculationFile, writeTextIntoFolder } from "./lib/files.js";
 import { buildEcmMarkdown, buildMeetingMarkdown, buildSavingMarkdown, ecmFilename, extractMeetingSections, meetingFilename, replaceMeetingSections, savingFilename } from "./lib/markdown.js";
-import { downloadEcmReviewWorkbook, downloadExcelRegister, downloadPdfRegister, downloadWordRegister, parseEcmReviewWorkbook } from "./lib/reports.js";
+import { downloadEcmReviewWorkbook, downloadExcelRegister, downloadPptxRegister, parseEcmReviewWorkbook } from "./lib/reports.js";
 import { EQUIPMENT_TYPE_TO_BRICK_CLASS, kwh, money, todayIso, utilityCost } from "./lib/format.js";
 
 const FOLDERS = [
@@ -173,7 +173,7 @@ export default function App() {
     }
     setHandles(next);
     setFolderStatuses(statuses);
-    if (next.database && statuses.database === "granted") await openDatabaseFolder(next.database);
+    if (next.database && statuses.database === "granted") await openDatabaseFolder(next.database, next);
   }
 
   async function configureFolder(key) {
@@ -195,16 +195,33 @@ export default function App() {
     }
   }
 
-  async function openDatabaseFolder(folderHandle) {
+  async function restoreFolderPermission(key) {
+    try {
+      setSetupError("");
+      const handle = handles[key];
+      if (!handle) return configureFolder(key);
+      const granted = await ensurePermission(handle, "readwrite");
+      setFolderStatuses((prev) => ({ ...prev, [key]: granted ? "granted" : "prompt" }));
+      notify(granted ? "Folder permission restored." : "Folder permission was not granted.");
+    } catch (error) {
+      setSetupError(error.message || String(error));
+      notify("Folder permission restore failed.");
+    }
+  }
+
+  async function openDatabaseFolder(folderHandle, allHandles = handles, options = {}) {
     try {
       setBusy(true);
       setSetupError("");
       if (!folderHandle) throw new Error("Select the Database Folder first.");
-      const databaseGranted = await ensurePermission(folderHandle, "readwrite");
-      const statuses = { database: databaseGranted ? "granted" : await permissionState(folderHandle, "readwrite") };
-      for (const [key, handle] of Object.entries(handles)) {
-        if (!handle || key === "database") continue;
-        statuses[key] = await permissionState(handle, "readwrite");
+      const statuses = {};
+      for (const [key, handle] of Object.entries(allHandles)) {
+        if (!handle) continue;
+        const shouldRequest = key === "database" || options.requestAll;
+        const granted = shouldRequest
+          ? await ensurePermission(handle, "readwrite")
+          : (await permissionState(handle, "readwrite")) === "granted";
+        statuses[key] = granted ? "granted" : await permissionState(handle, "readwrite");
       }
       setFolderStatuses((prev) => ({ ...prev, ...statuses }));
       if (statuses.database !== "granted") throw new Error("Database folder permission was not granted.");
@@ -633,8 +650,9 @@ export default function App() {
             handles={handles}
             folderStatuses={folderStatuses}
             configureFolder={configureFolder}
+            restoreFolderPermission={restoreFolderPermission}
             importDatabase={importDatabase}
-            loadDatabase={() => openDatabaseFolder(handles.database)}
+            loadDatabase={() => openDatabaseFolder(handles.database, handles, { requestAll: true })}
             data={data}
             setupError={setupError}
             busy={busy}
@@ -756,7 +774,7 @@ export default function App() {
   );
 }
 
-function SetupView({ handles, folderStatuses, configureFolder, importDatabase, loadDatabase, data, setupError, busy, ready }) {
+function SetupView({ handles, folderStatuses, configureFolder, restoreFolderPermission, importDatabase, loadDatabase, data, setupError, busy, ready }) {
   const requiredConfigured = FOLDERS.filter((folder) => folder.required).every((folder) => handles[folder.key]);
   return (
     <section className="section">
@@ -780,21 +798,31 @@ function SetupView({ handles, folderStatuses, configureFolder, importDatabase, l
                 <strong>{folder.label}</strong>
                 <span className="pill">{folderStatusLabel(handles[folder.key], folderStatuses[folder.key])}</span>
               </div>
+              <p className="muted" style={{ margin: "8px 0 0" }}>
+                {handles[folder.key]?.name ? `Remembered folder: ${handles[folder.key].name}` : "No folder selected."}
+              </p>
             </div>
             <div className="toolbar">
-              <button className="btn" onClick={() => configureFolder(folder.key)}>Select Folder</button>
+              {handles[folder.key] ? (
+                <>
+                  <button className="btn" onClick={() => restoreFolderPermission(folder.key)}>Restore Permission</button>
+                  <button className="btn" onClick={() => configureFolder(folder.key)}>Change Folder</button>
+                </>
+              ) : (
+                <button className="btn" onClick={() => configureFolder(folder.key)}>Select Folder</button>
+              )}
             </div>
           </div>
         ))}
       </div>
       <div className="toolbar">
-        <button className="btn primary" disabled={!handles.database || busy} onClick={loadDatabase}>{busy ? "Working..." : "Load Workspace"}</button>
+        <button className="btn primary" disabled={!handles.database || busy} onClick={loadDatabase}>{busy ? "Working..." : ready ? "Reload Workspace" : "Resume Workspace"}</button>
         <button className="btn primary" disabled={!handles.database || busy} onClick={importDatabase}>Import Existing .db</button>
         <span className="muted">
           {ready
             ? "ecm_register.db is open. Go to Dashboard or ECMs."
             : requiredConfigured
-              ? "Required folders are remembered. Click Load Workspace after reopening the browser to restore permissions and load the database."
+              ? "Required folders are remembered. Click Resume Workspace after reopening the browser to restore permissions and load the database."
               : "Select the required folders first, then import your existing .db."}
         </span>
       </div>
@@ -806,6 +834,7 @@ function folderStatusLabel(handle, status) {
   if (!handle) return "Missing";
   if (status === "granted") return "Ready";
   if (status === "denied") return "Blocked";
+  if (status === "prompt") return "Permission needed";
   return "Remembered";
 }
 
@@ -1188,8 +1217,7 @@ function ReportsView({ ready, db, properties, selectedProperty, setSelectedPrope
             {busy ? "Importing..." : "Import Reviewed ECM Workbook"}
             <input type="file" accept=".xlsx" onChange={importEcmReviewWorkbook} disabled={busy} style={{ display: "none" }} />
           </label>
-          <button className="btn" onClick={() => downloadWordRegister(db, selectedProperty)}>Word - Selected Property</button>
-          <button className="btn" onClick={() => downloadPdfRegister(db, selectedProperty)}>PDF - Selected Property</button>
+          <button className="btn" onClick={() => downloadPptxRegister(db, selectedProperty)}>PPTX Report - Selected Property</button>
         </div>
         <p className="muted">Exports download locally. The ECM list template is designed for Excel review and can be imported back using the stable ecm_id column.</p>
       </div>

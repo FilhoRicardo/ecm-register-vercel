@@ -231,11 +231,12 @@ export async function downloadPdfRegister(db, property) {
   const page = {
     width: doc.internal.pageSize.getWidth(),
     height: doc.internal.pageSize.getHeight(),
-    left: 56,
-    right: 56,
-    top: 72,
-    bottom: 62
+    left: 64,
+    right: 64,
+    top: 82,
+    bottom: 82
   };
+  const panel = { x: 42, y: 42, width: page.width - 84, height: page.height - 84 };
   let y = page.top;
 
   const drawBackground = () => {
@@ -247,17 +248,21 @@ export async function downloadPdfRegister(db, property) {
   const drawContentPanel = () => {
     doc.setFillColor(255, 255, 255);
     doc.setDrawColor(...PDF_BORDER);
-    doc.rect(42, 54, page.width - 84, page.height - 114, "FD");
+    doc.rect(panel.x, panel.y, panel.width, panel.height, "FD");
   };
 
   const canvas = (withPanel = true) => {
     drawBackground();
     if (withPanel) drawContentPanel();
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(...PDF_BORDER);
+    doc.roundedRect(page.left - 8, 48, 112, 18, 3, 3, "FD");
+    doc.roundedRect(page.width - page.right - 42, page.height - 58, 50, 18, 3, 3, "FD");
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
     doc.setTextColor(...PDF_GREEN);
-    doc.text("Savills sustainability", 51, 38);
-    doc.text(`Page ${doc.internal.getNumberOfPages()}`, page.width - 51, page.height - 34, { align: "right" });
+    doc.text("Savills sustainability", page.left, 60);
+    doc.text(`Page ${doc.internal.getNumberOfPages()}`, page.width - page.right, page.height - 46, { align: "right" });
   };
 
   const addPage = () => {
@@ -310,7 +315,7 @@ export async function downloadPdfRegister(db, property) {
     ecm.utility_type,
     `${kwh(ecm.energy_saving_kwh)} kWh`,
     `EUR ${money(ecm.annual_saving_eur)}`
-  ]), [88, 162, 64, 62, 78, 78], addPage);
+  ]), [76, 150, 56, 54, 66, 65], addPage);
 
   if (savings.length) {
     y += 14;
@@ -324,7 +329,7 @@ export async function downloadPdfRegister(db, property) {
       saving.end_date,
       `${kwh(saving.energy_saving_kwh)} kWh`,
       `EUR ${money(saving.cost_saving_eur)}`
-    ]), [78, 125, 58, 70, 70, 70, 62], addPage);
+    ]), [66, 112, 52, 60, 60, 60, 57], addPage);
   }
 
   ecms.forEach((ecm, index) => {
@@ -358,14 +363,21 @@ export async function downloadPdfRegister(db, property) {
       if (y + 90 > page.height - page.bottom) addPage();
       pdfHeading(doc, "Measured implemented savings", page.left, y, 11);
       y += 18;
-      y = pdfTable(doc, page, y, ["Start", "End", "Measured kWh", "Unit cost", "Measured EUR", "Notes"], ecmSavings.map((saving) => [
+      y = pdfTable(doc, page, y, ["Start", "End", "Measured kWh", "Unit cost", "Measured EUR"], ecmSavings.map((saving) => [
         saving.start_date,
         saving.end_date,
         `${kwh(saving.energy_saving_kwh)} kWh`,
         `EUR ${Number(saving.unit_cost_eur_per_kwh || 0).toFixed(4)}/kWh`,
-        `EUR ${money(saving.cost_saving_eur)}`,
-        saving.notes || ""
-      ]), [68, 68, 76, 72, 76, 170], addPage);
+        `EUR ${money(saving.cost_saving_eur)}`
+      ]), [75, 75, 100, 95, 122], addPage);
+      for (const saving of ecmSavings) {
+        if (!String(saving.notes || "").trim()) continue;
+        y += 8;
+        if (y + 40 > page.height - page.bottom) addPage();
+        pdfHeading(doc, "Measured notes", page.left, y, 10);
+        y += 15;
+        y = pdfParagraph(doc, page, y, saving.notes, addPage);
+      }
     }
   });
 
@@ -545,6 +557,7 @@ function pdfKeyValueTable(doc, page, y, rows, addPage) {
 }
 
 function pdfTable(doc, page, y, headers, rows, widths, addPage) {
+  widths = fitTableWidths(widths, page.width - page.left - page.right);
   const headerHeight = 22;
   const drawHeader = () => {
     doc.setFillColor(...PDF_LIGHT_GREEN);
@@ -587,6 +600,15 @@ function pdfTable(doc, page, y, headers, rows, widths, addPage) {
     y += height;
   }
   return y;
+}
+
+function fitTableWidths(widths, maxWidth) {
+  const total = widths.reduce((sum, width) => sum + width, 0);
+  if (total <= maxWidth) return widths;
+  const scaled = widths.map((width) => Math.floor(width * (maxWidth / total)));
+  const remainder = maxWidth - scaled.reduce((sum, width) => sum + width, 0);
+  scaled[scaled.length - 1] += remainder;
+  return scaled;
 }
 
 function heading(text, level = 1) {

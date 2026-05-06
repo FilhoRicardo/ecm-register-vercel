@@ -464,11 +464,12 @@ function chunks(rows, size) {
 
 async function getReportTemplateAssets() {
   if (reportTemplateAssets) return reportTemplateAssets;
-  const [cover, page, logo] = await Promise.all([
+  const [cover, page, logoSource] = await Promise.all([
     assetDataUrl(reportTemplateCoverUrl, "PPTX cover background", true),
     assetDataUrl(reportTemplatePageUrl, "PPTX page background", true),
     assetDataUrl(savillsLogoUrl, "Savills logo", false)
   ]);
+  const logo = logoSource ? await rasterizeSvgDataUrl(logoSource) : null;
   reportTemplateAssets = { cover, page, logo };
   return reportTemplateAssets;
 }
@@ -488,6 +489,30 @@ async function assetDataUrl(url, label, required = false) {
     if (required) throw new Error(`${label} failed to load. The PPTX report template assets are missing or unavailable.`);
     return null;
   }
+}
+
+async function rasterizeSvgDataUrl(dataUrl) {
+  if (!String(dataUrl || "").startsWith("data:image/svg+xml")) return dataUrl;
+  if (typeof document === "undefined" || typeof Image === "undefined") return null;
+  return new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => {
+      const size = 512;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        resolve(null);
+        return;
+      }
+      context.clearRect(0, 0, size, size);
+      context.drawImage(image, 0, 0, size, size);
+      resolve(canvas.toDataURL("image/png"));
+    };
+    image.onerror = () => resolve(null);
+    image.src = dataUrl;
+  });
 }
 
 function styleExcelRegister(worksheet) {

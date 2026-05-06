@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs/dist/exceljs.min.js";
 import { jsPDF } from "jspdf";
 import { Document, Packer, Paragraph, Table, TableCell, TableRow, TextRun, WidthType } from "docx";
+import reportBackgroundUrl from "../assets/report-background.jpg";
 import { downloadBlob } from "./storage.js";
 import { kwh, money, slug } from "./format.js";
 import { getEcms, getEquipment, getImplementedSavings, getProperties, getTenants } from "./sqlite.js";
@@ -58,6 +59,10 @@ const EXCEL_REGISTER_HEADERS = [
 const STATUS_OPTIONS = ["Open", "Approved", "In Progress", "Implemented", "Rejected", "On Hold"];
 const UTILITY_OPTIONS = ["electricity", "heating", "cooling"];
 const REVIEW_DECISIONS = ["Keep", "Update", "Reject", "Implemented", "Needs discussion"];
+const PDF_GREEN = [24, 74, 44];
+const PDF_LIGHT_GREEN = [239, 247, 242];
+const PDF_BORDER = [188, 207, 196];
+let reportBackgroundDataUrl = null;
 
 export async function downloadExcelRegister(db, property = null) {
   const workbook = new ExcelJS.Workbook();
@@ -206,8 +211,9 @@ export async function downloadWordRegister(db, property) {
   downloadBlob(blob, `${slug(property?.name || "All_Properties")}_ECM_Register.docx`);
 }
 
-export function downloadPdfRegister(db, property) {
+export async function downloadPdfRegister(db, property) {
   if (!property) return;
+  const background = await getReportBackground();
 
   const ecms = getEcms(db, property.id);
   const tenants = getTenants(db).filter((row) => row.property_id === property.id);
@@ -232,10 +238,24 @@ export function downloadPdfRegister(db, property) {
   };
   let y = page.top;
 
-  const canvas = () => {
+  const drawBackground = () => {
+    if (background) {
+      doc.addImage(background, "JPEG", 0, 0, page.width, page.height);
+    }
+  };
+
+  const drawContentPanel = () => {
+    doc.setFillColor(255, 255, 255);
+    doc.setDrawColor(...PDF_BORDER);
+    doc.rect(42, 54, page.width - 84, page.height - 114, "FD");
+  };
+
+  const canvas = (withPanel = true) => {
+    drawBackground();
+    if (withPanel) drawContentPanel();
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8);
-    doc.setTextColor(82, 98, 88);
+    doc.setTextColor(...PDF_GREEN);
     doc.text("Savills sustainability", 51, 38);
     doc.text(`Page ${doc.internal.getNumberOfPages()}`, page.width - 51, page.height - 34, { align: "right" });
   };
@@ -243,17 +263,20 @@ export function downloadPdfRegister(db, property) {
   const addPage = () => {
     doc.addPage();
     y = page.top;
-    canvas();
+    canvas(true);
   };
 
-  canvas();
+  canvas(false);
+  doc.setFillColor(255, 255, 255);
+  doc.setDrawColor(...PDF_BORDER);
+  doc.roundedRect(76, 244, page.width - 152, 132, 6, 6, "FD");
   doc.setFont("helvetica", "bold");
   doc.setFontSize(21);
-  doc.setTextColor(24, 74, 44);
+  doc.setTextColor(...PDF_GREEN);
   doc.text("Energy Conservation Measure Register", page.width / 2, 300, { align: "center" });
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
-  doc.setTextColor(75, 90, 80);
+  doc.setTextColor(...PDF_GREEN);
   doc.text(cleanPdfText(property.name), page.width / 2, 324, { align: "center" });
   doc.text(cleanPdfText(property.address || ""), page.width / 2, 343, { align: "center" });
 
@@ -472,7 +495,7 @@ function addReviewInstructions(workbook) {
 function pdfHeading(doc, text, x, y, size = 14) {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(size);
-  doc.setTextColor(24, 74, 44);
+  doc.setTextColor(...PDF_GREEN);
   doc.text(cleanPdfText(text), x, y);
 }
 
@@ -482,7 +505,7 @@ function pdfParagraph(doc, page, y, value, addPage) {
   const lines = doc.splitTextToSize(text, availableWidth);
   doc.setFont("helvetica", "normal");
   doc.setFontSize(8.5);
-  doc.setTextColor(31, 42, 36);
+  doc.setTextColor(...PDF_GREEN);
   for (const line of lines) {
     if (y + 12 > page.height - page.bottom) {
       addPage();
@@ -505,16 +528,16 @@ function pdfKeyValueTable(doc, page, y, rows, addPage) {
       addPage();
       y = page.top;
     }
-    doc.setDrawColor(220, 226, 222);
-    doc.setFillColor(247, 249, 247);
+    doc.setDrawColor(...PDF_BORDER);
+    doc.setFillColor(...PDF_LIGHT_GREEN);
     doc.rect(page.left, y, labelWidth, height, "FD");
     doc.rect(page.left + labelWidth, y, valueWidth, height, "S");
     doc.setFont("helvetica", "bold");
     doc.setFontSize(8.5);
-    doc.setTextColor(24, 74, 44);
+    doc.setTextColor(...PDF_GREEN);
     doc.text(labelLines, page.left + 7, y + 14);
     doc.setFont("helvetica", "normal");
-    doc.setTextColor(31, 42, 36);
+    doc.setTextColor(...PDF_GREEN);
     doc.text(valueLines, page.left + labelWidth + 7, y + 14);
     y += height;
   }
@@ -524,14 +547,14 @@ function pdfKeyValueTable(doc, page, y, rows, addPage) {
 function pdfTable(doc, page, y, headers, rows, widths, addPage) {
   const headerHeight = 22;
   const drawHeader = () => {
-    doc.setFillColor(24, 74, 44);
-    doc.setDrawColor(24, 74, 44);
+    doc.setFillColor(...PDF_LIGHT_GREEN);
+    doc.setDrawColor(...PDF_BORDER);
     let x = page.left;
     headers.forEach((header, index) => {
       doc.rect(x, y, widths[index], headerHeight, "FD");
       doc.setFont("helvetica", "bold");
       doc.setFontSize(7);
-      doc.setTextColor(255, 255, 255);
+      doc.setTextColor(...PDF_GREEN);
       doc.text(doc.splitTextToSize(cleanPdfText(header), widths[index] - 8), x + 4, y + 13);
       x += widths[index];
     });
@@ -553,11 +576,11 @@ function pdfTable(doc, page, y, headers, rows, widths, addPage) {
     }
     let x = page.left;
     cellLines.forEach((lines, index) => {
-      doc.setDrawColor(220, 226, 222);
+      doc.setDrawColor(...PDF_BORDER);
       doc.rect(x, y, widths[index], height, "S");
       doc.setFont("helvetica", "normal");
       doc.setFontSize(6.8);
-      doc.setTextColor(31, 42, 36);
+      doc.setTextColor(...PDF_GREEN);
       doc.text(lines, x + 4, y + 12);
       x += widths[index];
     });
@@ -653,6 +676,23 @@ function numberOrNull(value) {
 
 function sum(rows, key) {
   return rows.reduce((total, row) => total + Number(row[key] || 0), 0);
+}
+
+async function getReportBackground() {
+  if (reportBackgroundDataUrl) return reportBackgroundDataUrl;
+  try {
+    const response = await fetch(reportBackgroundUrl);
+    const blob = await response.blob();
+    reportBackgroundDataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(blob);
+    });
+    return reportBackgroundDataUrl;
+  } catch {
+    return null;
+  }
 }
 
 function cleanPdfText(value) {

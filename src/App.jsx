@@ -118,7 +118,7 @@ export default function App() {
   const [calcFile, setCalcFile] = useState(null);
   const [savingForm, setSavingForm] = useState(defaultSavingForm());
   const [usageForm, setUsageForm] = useState(defaultUsageForm());
-  const [meetingForm, setMeetingForm] = useState({ property_id: "", report_month: todayIso().slice(0, 7), meeting_date: todayIso(), pre: "", post: "" });
+  const [meetingForm, setMeetingForm] = useState({ property_id: "", report_month: todayIso().slice(0, 7), meeting_date: todayIso(), pre: "" });
   const [meetingFiles, setMeetingFiles] = useState([]);
   const [selectedMeetingName, setSelectedMeetingName] = useState("");
   const [meetingDraft, setMeetingDraft] = useState({ pre: "", post: "" });
@@ -489,7 +489,7 @@ export default function App() {
       reportMonth: meetingForm.report_month,
       meetingDate: meetingForm.meeting_date,
       preMeeting: meetingForm.pre,
-      postMeeting: meetingForm.post,
+      postMeeting: "",
       performance,
       openEcms
     });
@@ -1145,7 +1145,6 @@ function MeetingsView({ ready, properties, form, setForm, save, loadMeetingFiles
             <Field label="Meeting date"><input type="date" value={form.meeting_date} onChange={(e) => set("meeting_date", e.target.value)} /></Field>
           </div>
           <Field label="Comments pre meeting"><textarea value={form.pre} onChange={(e) => set("pre", e.target.value)} /></Field>
-          <Field label="Comments post meeting"><textarea value={form.post} onChange={(e) => set("post", e.target.value)} /></Field>
           <button className="btn primary">Save Meeting Note to Obsidian</button>
         </form>
       </div>
@@ -1157,18 +1156,11 @@ function MeetingsView({ ready, properties, form, setForm, save, loadMeetingFiles
             {meetingFiles.map((file) => <option key={file.name} value={file.name}>{file.name}</option>)}
           </select>
         </div>
-        <Field label="Existing note - comments pre meeting">
-          <textarea
-            value={meetingDraft.pre || ""}
-            onChange={(e) => setMeetingDraft((prev) => ({ ...prev, pre: e.target.value }))}
-            style={{ minHeight: 170 }}
-          />
-        </Field>
         <Field label="Existing note - comments post meeting">
           <textarea
             value={meetingDraft.post || ""}
             onChange={(e) => setMeetingDraft((prev) => ({ ...prev, post: e.target.value }))}
-            style={{ minHeight: 170 }}
+            style={{ minHeight: 320 }}
           />
         </Field>
         <button className="btn primary" type="button" disabled={!selectedMeetingName} onClick={saveMeetingDraft}>Save Existing Note</button>

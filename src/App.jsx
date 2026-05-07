@@ -34,6 +34,16 @@ import { listMarkdownFiles, routeCalculationFile, writeTextIntoFolder } from "./
 import { buildEcmMarkdown, buildMeetingMarkdown, buildSavingMarkdown, ecmFilename, extractMeetingSections, meetingFilename, replaceMeetingSections, savingFilename } from "./lib/markdown.js";
 import { downloadEcmReviewWorkbook, downloadExcelRegister, downloadPptxRegister, parseEcmReviewWorkbook } from "./lib/reports.js";
 import { EQUIPMENT_TYPE_TO_BRICK_CLASS, kwh, money, todayIso, utilityCost } from "./lib/format.js";
+import {
+  buildCrremAnalysis,
+  CRREM_COUNTRIES,
+  CRREM_DATA_ATTRIBUTION,
+  CRREM_DATA_VERSION,
+  CRREM_PROPERTY_TYPES,
+  getCrremDataAvailability,
+  inferCrremCountry,
+  normaliseCrremSettings
+} from "./lib/crrem.js";
 
 const FOLDERS = [
   { key: "database", label: "Database Folder", required: true },
@@ -53,6 +63,7 @@ const NAV = [
   ["ecms", "⚡ ECMs"],
   ["savings", "💶 Implemented Savings"],
   ["usage", "📊 Monthly Usage"],
+  ["crrem", "CRREM Plot"],
   ["meetings", "📝 Monthly Meetings"],
   ["reports", "📤 Reports"],
   ["database", "🧪 SQLite Lab"],
@@ -78,6 +89,8 @@ const EMPTY_PROPERTY = {
   name: "",
   address: "",
   total_floor_area: "",
+  crrem_country: "",
+  crrem_property_type: "Office",
   elec_cost_eur_per_kwh: "0.12",
   heating_cost_eur_per_kwh: "0.09",
   cooling_cost_eur_per_kwh: "0.12",
@@ -286,7 +299,12 @@ export default function App() {
 
   async function saveProperty(event) {
     event.preventDefault();
-    const id = upsertProperty(db, { ...propertyForm, id: propertyForm.id || null });
+    const id = upsertProperty(db, {
+      ...propertyForm,
+      id: propertyForm.id || null,
+      crrem_country: propertyForm.crrem_country || inferCrremCountry(propertyForm),
+      crrem_property_type: propertyForm.crrem_property_type || "Office"
+    });
     setPropertyForm(EMPTY_PROPERTY);
     setSelectedPropertyId(String(id));
     await persist("Property saved.");
@@ -742,6 +760,15 @@ export default function App() {
             remove={removeUsage}
           />
         )}
+        {active === "crrem" && (
+          <CrremView
+            ready={ready}
+            properties={properties}
+            selectedPropertyId={selectedPropertyId}
+            setSelectedPropertyId={setSelectedPropertyId}
+            monthlyUsage={data?.monthlyUsage || []}
+          />
+        )}
         {active === "meetings" && (
           <MeetingsView
             ready={ready}
@@ -888,6 +915,7 @@ function DashboardView({ data, ready }) {
 function PropertiesView({ ready, properties, form, setForm, save, remove }) {
   if (!ready) return <EmptyState />;
   const set = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
+  const inferredCountry = inferCrremCountry(form);
   return (
     <section className="section">
       <h3>Properties</h3>
@@ -896,6 +924,19 @@ function PropertiesView({ ready, properties, form, setForm, save, remove }) {
           <form onSubmit={save}>
             <Field label="Name"><input value={form.name} onChange={(e) => set("name", e.target.value)} required /></Field>
             <Field label="Address"><input value={form.address} onChange={(e) => set("address", e.target.value)} /></Field>
+            <div className="grid two">
+              <Field label="CRREM country">
+                <select value={form.crrem_country || ""} onChange={(e) => set("crrem_country", e.target.value)}>
+                  <option value="">{inferredCountry ? `Use inferred: ${inferredCountry}` : "Select country..."}</option>
+                  {CRREM_COUNTRIES.map((country) => <option key={country} value={country}>{country}</option>)}
+                </select>
+              </Field>
+              <Field label="CRREM property type">
+                <select value={form.crrem_property_type || "Office"} onChange={(e) => set("crrem_property_type", e.target.value)}>
+                  {CRREM_PROPERTY_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+                </select>
+              </Field>
+            </div>
             <div className="grid two">
               <Field label="Total floor area m²"><input type="number" step="0.01" value={form.total_floor_area} onChange={(e) => set("total_floor_area", e.target.value)} /></Field>
               <Field label="Electricity cost EUR/kWh"><input type="number" step="0.0001" value={form.elec_cost_eur_per_kwh} onChange={(e) => set("elec_cost_eur_per_kwh", e.target.value)} /></Field>
@@ -911,14 +952,15 @@ function PropertiesView({ ready, properties, form, setForm, save, remove }) {
         </div>
         <div className="card" style={{ overflow: "auto", maxHeight: 680 }}>
           <table>
-            <thead><tr><th>Name</th><th>Area</th><th>Costs</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Area</th><th>CRREM</th><th>Costs</th><th></th></tr></thead>
             <tbody>
               {properties.map((property) => (
                 <tr key={property.id}>
-                  <td onClick={() => setForm({ ...property, total_floor_area: property.total_floor_area ?? "" })} style={{ cursor: "pointer" }}>
+                  <td onClick={() => setForm({ ...property, total_floor_area: property.total_floor_area ?? "", crrem_country: property.crrem_country || inferCrremCountry(property), crrem_property_type: property.crrem_property_type || "Office" })} style={{ cursor: "pointer" }}>
                     <strong>{property.name}</strong><br /><span className="muted">{property.address}</span>
                   </td>
                   <td>{money(property.total_floor_area)} m²</td>
+                  <td>{normaliseCrremSettings(property).country} / {normaliseCrremSettings(property).propertyType}</td>
                   <td>Elec €{money(property.elec_cost_eur_per_kwh)} / Heat €{money(property.heating_cost_eur_per_kwh)} / Cool €{money(property.cooling_cost_eur_per_kwh)}</td>
                   <td><button className="btn danger" type="button" onClick={() => remove(property.id)}>Remove</button></td>
                 </tr>
@@ -1171,6 +1213,127 @@ function MonthlyUsageView({ ready, properties, tenants, usage, form, setForm, sa
   );
 }
 
+function CrremView({ ready, properties, selectedPropertyId, setSelectedPropertyId, monthlyUsage }) {
+  const [mode, setMode] = useState("average_full_years");
+  const [reportingYear, setReportingYear] = useState("");
+  const [rollingEndMonth, setRollingEndMonth] = useState("");
+  const selectedId = Number(selectedPropertyId) || properties[0]?.id || "";
+  const property = properties.find((item) => item.id === Number(selectedId)) || properties[0] || null;
+  const availability = useMemo(
+    () => getCrremDataAvailability(monthlyUsage, property?.id),
+    [monthlyUsage, property?.id]
+  );
+
+  useEffect(() => {
+    if (availability.fullYears.length && !reportingYear) setReportingYear(String(availability.fullYears.at(-1)));
+    if (availability.latestMonth && !rollingEndMonth) setRollingEndMonth(availability.latestMonth);
+  }, [availability.fullYears, availability.latestMonth, reportingYear, rollingEndMonth]);
+
+  const analysis = useMemo(
+    () => buildCrremAnalysis({ property, monthlyUsage, mode, reportingYear, rollingEndMonth }),
+    [property, monthlyUsage, mode, reportingYear, rollingEndMonth]
+  );
+
+  if (!ready) return <EmptyState />;
+  const settings = property ? normaliseCrremSettings(property) : { country: "", propertyType: "" };
+  const chartPoints = analysis.ok ? combineCrremSeries(analysis.historical, analysis.projected, analysis.baseline.year) : [];
+  return (
+    <section className="section">
+      <h3>CRREM Plot</h3>
+      <div className="card">
+        <div className="grid four">
+          <Field label="Property">
+            <select className="input" value={selectedId} onChange={(e) => setSelectedPropertyId(e.target.value)}>
+              {properties.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Baseline source">
+            <select value={mode} onChange={(e) => setMode(e.target.value)}>
+              <option value="average_full_years">Average complete years</option>
+              <option value="reporting_year">Reporting year</option>
+              <option value="rolling_12">Rolling 12 months</option>
+            </select>
+          </Field>
+          {mode === "reporting_year" ? (
+            <Field label="Reporting year">
+              <select value={reportingYear} onChange={(e) => setReportingYear(e.target.value)}>
+                {availability.fullYears.map((year) => <option key={year} value={year}>{year}</option>)}
+              </select>
+            </Field>
+          ) : (
+            <Field label="Latest complete year"><input value={availability.fullYears.at(-1) || "No complete year"} disabled /></Field>
+          )}
+          {mode === "rolling_12" ? (
+            <Field label="Rolling end month"><input type="month" value={rollingEndMonth} onChange={(e) => setRollingEndMonth(e.target.value)} /></Field>
+          ) : (
+            <Field label="Latest month"><input value={availability.latestMonth || "No usage"} disabled /></Field>
+          )}
+        </div>
+        <p className="muted">
+          CRREM settings: {settings.country || "not set"} / {settings.propertyType || "not set"}.
+          Edit the property record to change country or asset type.
+        </p>
+      </div>
+
+      {!analysis.ok ? (
+        <div className="card" style={{ marginTop: 14 }}>
+          <h3>CRREM input needed</h3>
+          <p className="muted">{analysis.error}</p>
+        </div>
+      ) : (
+        <>
+          <div className="grid four" style={{ marginTop: 14 }}>
+            <Kpi label="Baseline EUI" value={`${formatCrremNumber(analysis.baselinePoint.eui)} kWh/m²/a`} />
+            <Kpi label="Carbon intensity" value={`${formatCrremNumber(analysis.baselinePoint.carbonIntensity)} kgCO2e/m²/a`} />
+            <Kpi label="CO2 misalignment" value={analysis.carbonMisalignmentYear} />
+            <Kpi label="EUI misalignment" value={analysis.euiMisalignmentYear} />
+          </div>
+          <div className="grid two" style={{ marginTop: 14 }}>
+            <CrremChart
+              title="Carbon intensity pathway"
+              unit="kgCO2e/m²/a"
+              points={chartPoints}
+              actualKey="carbonIntensity"
+              pathwayKey="carbonPathway"
+              baselineYear={analysis.baseline.year}
+            />
+            <CrremChart
+              title="Energy intensity pathway"
+              unit="kWh/m²/a"
+              points={chartPoints}
+              actualKey="eui"
+              pathwayKey="euiPathway"
+              baselineYear={analysis.baseline.year}
+            />
+          </div>
+          <div className="grid two" style={{ marginTop: 14 }}>
+            <div className="card">
+              <h3>Baseline Inputs</h3>
+              <table>
+                <tbody>
+                  <tr><th>Baseline</th><td>{analysis.baseline.label}</td></tr>
+                  <tr><th>Region code</th><td>{analysis.regionCode}</td></tr>
+                  <tr><th>Floor area</th><td>{money(property.total_floor_area)} m²</td></tr>
+                  <tr><th>Electricity</th><td>{kwh(analysis.baseline.usage.electricity_kwh)} kWh/a</td></tr>
+                  <tr><th>Heating</th><td>{kwh(analysis.baseline.usage.heating_kwh)} kWh/a</td></tr>
+                  <tr><th>Cooling</th><td>{kwh(analysis.baseline.usage.cooling_kwh)} kWh/a</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div className="card">
+              <h3>Method</h3>
+              <p className="muted">
+                Historical points use complete calendar years from whole-building monthly usage. Future points hold annual energy demand flat from the selected baseline through 2050 and apply the CRREM grid decarbonisation factors.
+              </p>
+              <p className="muted">CRREM data: {CRREM_DATA_VERSION}. {CRREM_DATA_ATTRIBUTION}</p>
+            </div>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 function MeetingsView({ ready, properties, form, setForm, save, loadMeetingFiles, meetingFiles, selectedMeetingName, selectMeeting, meetingDraft, setMeetingDraft, saveMeetingDraft }) {
   if (!ready) return <EmptyState />;
   const set = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
@@ -1328,6 +1491,74 @@ function CompactTable({ rows, columns, onEdit, onRemove }) {
       </table>
     </div>
   );
+}
+
+function CrremChart({ title, unit, points, actualKey, pathwayKey, baselineYear }) {
+  const valid = (points || []).filter((point) => Number.isFinite(Number(point[actualKey])) && Number.isFinite(Number(point[pathwayKey])));
+  if (!valid.length) return <div className="card"><h3>{title}</h3><p className="muted">No chart data available.</p></div>;
+  const width = 760;
+  const height = 320;
+  const pad = { left: 54, right: 20, top: 26, bottom: 40 };
+  const minYear = Math.min(...valid.map((point) => point.year));
+  const maxYear = Math.max(...valid.map((point) => point.year));
+  const maxValue = Math.max(...valid.flatMap((point) => [Number(point[actualKey]), Number(point[pathwayKey])])) * 1.12 || 1;
+  const x = (year) => pad.left + ((year - minYear) / Math.max(1, maxYear - minYear)) * (width - pad.left - pad.right);
+  const y = (value) => height - pad.bottom - (Number(value) / maxValue) * (height - pad.top - pad.bottom);
+  const actualPath = chartPath(valid, x, y, actualKey);
+  const pathwayPath = chartPath(valid, x, y, pathwayKey);
+  const ticks = [minYear, Math.round((minYear + maxYear) / 2), maxYear];
+  return (
+    <div className="card chart-card">
+      <div className="chart-head">
+        <h3>{title}</h3>
+        <span className="muted">{unit}</span>
+      </div>
+      <svg className="crrem-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={title}>
+        <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} className="chart-axis" />
+        <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} className="chart-axis" />
+        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+          const value = maxValue * ratio;
+          const yy = y(value);
+          return (
+            <g key={ratio}>
+              <line x1={pad.left} y1={yy} x2={width - pad.right} y2={yy} className="chart-gridline" />
+              <text x={pad.left - 8} y={yy + 4} className="chart-label" textAnchor="end">{formatCrremNumber(value)}</text>
+            </g>
+          );
+        })}
+        {ticks.map((year) => (
+          <text key={year} x={x(year)} y={height - 14} className="chart-label" textAnchor="middle">{year}</text>
+        ))}
+        {baselineYear ? (
+          <g>
+            <line x1={x(baselineYear)} y1={pad.top} x2={x(baselineYear)} y2={height - pad.bottom} className="chart-baseline" />
+            <text x={x(baselineYear) + 5} y={pad.top + 12} className="chart-label">baseline</text>
+          </g>
+        ) : null}
+        <path d={pathwayPath} className="chart-path pathway" />
+        <path d={actualPath} className="chart-path actual" />
+      </svg>
+      <div className="chart-legend">
+        <span><i className="legend-dot actual"></i>Asset</span>
+        <span><i className="legend-dot pathway"></i>CRREM pathway</span>
+      </div>
+    </div>
+  );
+}
+
+function chartPath(points, x, y, key) {
+  return points.map((point, index) => `${index ? "L" : "M"} ${x(point.year).toFixed(1)} ${y(point[key]).toFixed(1)}`).join(" ");
+}
+
+function combineCrremSeries(historical, projected, baselineYear) {
+  const rows = [...(historical || []).filter((point) => point.year < baselineYear), ...(projected || [])];
+  return rows.sort((a, b) => a.year - b.year);
+}
+
+function formatCrremNumber(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "";
+  return n.toLocaleString(undefined, { maximumFractionDigits: 1, minimumFractionDigits: 0 });
 }
 
 function Field({ label, children, className = "" }) {

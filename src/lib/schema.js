@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS properties (
   name TEXT NOT NULL,
   address TEXT NOT NULL DEFAULT '',
   total_floor_area REAL,
+  crrem_country TEXT NOT NULL DEFAULT '',
+  crrem_property_type TEXT NOT NULL DEFAULT 'Office',
   elec_cost_eur_per_kwh REAL NOT NULL DEFAULT 0,
   heating_cost_eur_per_kwh REAL NOT NULL DEFAULT 0,
   cooling_cost_eur_per_kwh REAL NOT NULL DEFAULT 0,
@@ -129,7 +131,12 @@ CREATE TABLE IF NOT EXISTS ecm_measured_savings (
 
 const MIGRATIONS = [
   "ALTER TABLE ecms ADD COLUMN obsidian_filename TEXT NOT NULL DEFAULT ''",
-  "ALTER TABLE ecm_measured_savings ADD COLUMN obsidian_filename TEXT NOT NULL DEFAULT ''"
+  "ALTER TABLE ecm_measured_savings ADD COLUMN obsidian_filename TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE properties ADD COLUMN crrem_country TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE properties ADD COLUMN crrem_property_type TEXT NOT NULL DEFAULT 'Office'",
+  "UPDATE properties SET crrem_property_type = 'Office' WHERE crrem_property_type = '' OR crrem_property_type IS NULL",
+  "UPDATE properties SET crrem_country = 'Netherlands' WHERE (crrem_country = '' OR crrem_country IS NULL) AND (LOWER(name) LIKE '%keizers%' OR LOWER(name) LIKE '%akzo%' OR LOWER(name) LIKE '%un studio%' OR LOWER(address) LIKE '%amsterdam%')",
+  "UPDATE properties SET crrem_country = 'United Kingdom' WHERE (crrem_country = '' OR crrem_country IS NULL) AND (LOWER(name) LIKE '%ito%' OR LOWER(name) LIKE '%som%' OR LOWER(name) LIKE '%xyz%' OR LOWER(address) LIKE '%london%' OR LOWER(address) LIKE '%manchester%' OR LOWER(address) LIKE '%united kingdom%')"
 ];
 
 export function migrate(db) {

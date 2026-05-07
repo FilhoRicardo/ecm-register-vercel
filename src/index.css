@@ -211,6 +211,53 @@ select option {
   margin: 0 0 14px;
 }
 .meeting-note-controls .input { width: 100%; }
+.chart-card { min-height: 390px; }
+.chart-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+.chart-head h3 { margin: 0; }
+.crrem-chart {
+  width: 100%;
+  min-height: 320px;
+  display: block;
+}
+.chart-axis { stroke: rgba(148,163,184,0.4); stroke-width: 1; }
+.chart-gridline { stroke: rgba(148,163,184,0.12); stroke-width: 1; }
+.chart-baseline { stroke: rgba(250,204,21,0.62); stroke-width: 1.2; stroke-dasharray: 5 5; }
+.chart-path {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.chart-path.actual { stroke: #22d3ee; }
+.chart-path.pathway { stroke: #a78bfa; }
+.chart-label {
+  fill: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}
+.chart-legend {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 800;
+}
+.legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  margin-right: 6px;
+}
+.legend-dot.actual { background: #22d3ee; }
+.legend-dot.pathway { background: #a78bfa; }
 table {
   width: 100%;
   border-collapse: collapse;

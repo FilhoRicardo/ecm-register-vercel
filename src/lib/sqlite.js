@@ -126,7 +126,7 @@ export function upsertProperty(db, input) {
   if (input.id) {
     db.run(
       `UPDATE properties
-       SET name=?, address=?, total_floor_area=?, elec_cost_eur_per_kwh=?,
+       SET name=?, address=?, total_floor_area=?, crrem_country=?, crrem_property_type=?, elec_cost_eur_per_kwh=?,
            heating_cost_eur_per_kwh=?, cooling_cost_eur_per_kwh=?, notes=?,
            updated_at=CURRENT_TIMESTAMP
        WHERE id=?`,
@@ -134,6 +134,8 @@ export function upsertProperty(db, input) {
         input.name,
         input.address || "",
         nullable(input.total_floor_area),
+        input.crrem_country || "",
+        input.crrem_property_type || "Office",
         Number(input.elec_cost_eur_per_kwh || 0),
         Number(input.heating_cost_eur_per_kwh || 0),
         Number(input.cooling_cost_eur_per_kwh || 0),
@@ -145,13 +147,15 @@ export function upsertProperty(db, input) {
   }
   db.run(
     `INSERT INTO properties (
-      name, address, total_floor_area, elec_cost_eur_per_kwh,
+      name, address, total_floor_area, crrem_country, crrem_property_type, elec_cost_eur_per_kwh,
       heating_cost_eur_per_kwh, cooling_cost_eur_per_kwh, notes, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     [
       input.name,
       input.address || "",
       nullable(input.total_floor_area),
+      input.crrem_country || "",
+      input.crrem_property_type || "Office",
       Number(input.elec_cost_eur_per_kwh || 0),
       Number(input.heating_cost_eur_per_kwh || 0),
       Number(input.cooling_cost_eur_per_kwh || 0),

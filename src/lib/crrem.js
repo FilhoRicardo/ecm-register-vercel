@@ -66,12 +66,13 @@ export function getCrremDataAvailability(monthlyUsage, propertyId) {
   const annual = annualUsageByYear(monthlyUsage, propertyId);
   const years = Object.keys(annual).map(Number).sort((a, b) => a - b);
   const fullYears = years.filter((year) => annual[year].months.size === 12);
-  const months = wholeBuildingMonthlyUsage(monthlyUsage, propertyId).map((row) => row.usage_month).sort();
+  const months = crremMonthlyUsage(monthlyUsage, propertyId).map((row) => row.usage_month).sort();
   return {
     firstYear: years[0] || null,
     latestYear: years.at(-1) || null,
     fullYears,
-    latestMonth: months.at(-1) || ""
+    latestMonth: months.at(-1) || "",
+    usageSource: crremUsageSource(monthlyUsage, propertyId)
   };
 }
 
@@ -129,6 +130,7 @@ export function buildCrremAnalysis({ property, monthlyUsage, mode = "first_compl
     baseline,
     projectionBase,
     baselinePoint,
+    usageSource: crremUsageSource(monthlyUsage, property.id),
     historical,
     projected,
     carbonMisalignmentYear: firstCrossing(alignmentSeries, "carbonIntensity", "carbonPathway"),
@@ -156,21 +158,14 @@ function selectBaselineUsage(monthlyUsage, propertyId, mode, reportingYear, roll
   }
 
   if (mode === "first_complete_year") {
-    if (!fullYears.length) return { ok: false, error: "At least one complete calendar year of whole-building monthly usage is required." };
+    if (!fullYears.length) return { ok: false, error: "At least one complete calendar year of monthly usage is required." };
     const year = fullYears[0];
     return { ok: true, year, label: `${year} first complete year`, months: [...annual[year].months].sort(), usage: annual[year].totals };
   }
 
-  if (!fullYears.length) return { ok: false, error: "At least one complete calendar year of whole-building monthly usage is required." };
-  const total = { electricity_kwh: 0, heating_kwh: 0, cooling_kwh: 0 };
-  for (const year of fullYears) addUsage(total, annual[year].totals);
-  return {
-    ok: true,
-    year: fullYears.at(-1),
-    label: `Average of complete years: ${fullYears.join(", ")}`,
-    months: fullYears.flatMap((year) => [...annual[year].months].sort()),
-    usage: divideUsage(total, fullYears.length)
-  };
+  if (!fullYears.length) return { ok: false, error: "At least one complete calendar year of monthly usage is required." };
+  const year = fullYears[0];
+  return { ok: true, year, label: `${year} first complete year`, months: [...annual[year].months].sort(), usage: annual[year].totals };
 }
 
 function calculateYearPoint(year, usage, area, pathway, country, property, projected) {
@@ -218,15 +213,28 @@ function calculateYearPoint(year, usage, area, pathway, country, property, proje
   };
 }
 
-function wholeBuildingMonthlyUsage(monthlyUsage, propertyId) {
+function crremMonthlyUsage(monthlyUsage, propertyId) {
+  const rows = propertyMonthlyUsage(monthlyUsage, propertyId);
+  const buildingRows = rows.filter((row) => row.scope_type === "building");
+  return buildingRows.length ? buildingRows : rows.filter((row) => row.scope_type === "tenant");
+}
+
+function crremUsageSource(monthlyUsage, propertyId) {
+  const rows = propertyMonthlyUsage(monthlyUsage, propertyId);
+  if (rows.some((row) => row.scope_type === "building")) return "Whole-building usage records";
+  if (rows.some((row) => row.scope_type === "tenant")) return "Tenant usage rows aggregated";
+  return "No usage records";
+}
+
+function propertyMonthlyUsage(monthlyUsage, propertyId) {
   return (monthlyUsage || [])
-    .filter((row) => row.property_id === Number(propertyId) && row.scope_type === "building")
+    .filter((row) => row.property_id === Number(propertyId))
     .filter((row) => row.usage_month);
 }
 
 function annualUsageByYear(monthlyUsage, propertyId) {
   const annual = {};
-  for (const row of wholeBuildingMonthlyUsage(monthlyUsage, propertyId)) {
+  for (const row of crremMonthlyUsage(monthlyUsage, propertyId)) {
     const year = Number(String(row.usage_month).slice(0, 4));
     if (!annual[year]) annual[year] = { months: new Set(), totals: { electricity_kwh: 0, heating_kwh: 0, cooling_kwh: 0 } };
     annual[year].months.add(row.usage_month);
@@ -241,7 +249,7 @@ function sumMonths(monthlyUsage, propertyId, months) {
   const wanted = new Set(months);
   const totals = { electricity_kwh: 0, heating_kwh: 0, cooling_kwh: 0 };
   const found = new Set();
-  for (const row of wholeBuildingMonthlyUsage(monthlyUsage, propertyId)) {
+  for (const row of crremMonthlyUsage(monthlyUsage, propertyId)) {
     if (!wanted.has(row.usage_month)) continue;
     found.add(row.usage_month);
     addUsage(totals, row);
@@ -255,16 +263,8 @@ function addUsage(target, source) {
   target.cooling_kwh += Number(source.cooling_kwh || 0);
 }
 
-function divideUsage(usage, divisor) {
-  return {
-    electricity_kwh: usage.electricity_kwh / divisor,
-    heating_kwh: usage.heating_kwh / divisor,
-    cooling_kwh: usage.cooling_kwh / divisor
-  };
-}
-
 function latestUsageMonth(monthlyUsage, propertyId) {
-  return wholeBuildingMonthlyUsage(monthlyUsage, propertyId).map((row) => row.usage_month).sort().at(-1) || "";
+  return crremMonthlyUsage(monthlyUsage, propertyId).map((row) => row.usage_month).sort().at(-1) || "";
 }
 
 function monthRange(endMonth, count) {

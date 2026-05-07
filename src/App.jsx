@@ -960,8 +960,8 @@ function PropertiesView({ ready, properties, form, setForm, save, remove }) {
               </Field>
             </div>
             <div className="grid two">
-              <Field label="Heating EF override kgCO2e/kWh" help="Optional. Leave blank to use the app default for the selected heating carrier."><input type="number" step="0.0001" value={form.heating_emission_factor_kgco2e_per_kwh ?? ""} onChange={(e) => set("heating_emission_factor_kgco2e_per_kwh", e.target.value)} /></Field>
-              <Field label="Cooling EF override kgCO2e/kWh" help="Optional. Leave blank to use the app default for the selected cooling carrier."><input type="number" step="0.0001" value={form.cooling_emission_factor_kgco2e_per_kwh ?? ""} onChange={(e) => set("cooling_emission_factor_kgco2e_per_kwh", e.target.value)} /></Field>
+              <Field label="Optional heating emissions factor override" help="Only enter this if you have a project-specific heating emissions factor in kgCO2e/kWh. Leave blank to use the default for the selected heating carrier."><input type="number" step="0.0001" value={form.heating_emission_factor_kgco2e_per_kwh ?? ""} onChange={(e) => set("heating_emission_factor_kgco2e_per_kwh", e.target.value)} /></Field>
+              <Field label="Optional cooling emissions factor override" help="Only enter this if you have a project-specific cooling emissions factor in kgCO2e/kWh. Leave blank to use the default for the selected cooling carrier."><input type="number" step="0.0001" value={form.cooling_emission_factor_kgco2e_per_kwh ?? ""} onChange={(e) => set("cooling_emission_factor_kgco2e_per_kwh", e.target.value)} /></Field>
             </div>
             <div className="grid two">
               <Field label="On-site renewable consumed kWh/a" help="Annual renewable energy generated and used on site. Counts in EUI with zero carbon."><input type="number" step="0.01" value={form.renewable_consumed_kwh ?? ""} onChange={(e) => set("renewable_consumed_kwh", e.target.value)} /></Field>
@@ -1268,7 +1268,7 @@ function CrremView({ ready, properties, selectedPropertyId, setSelectedPropertyI
 
   if (!ready) return <EmptyState />;
   const settings = property ? normaliseCrremSettings(property) : { country: "", propertyType: "" };
-  const chartPoints = analysis.ok ? combineCrremSeries(analysis.historical, analysis.projected, analysis.baseline.year) : [];
+  const chartPoints = analysis.ok ? combineCrremSeries(analysis.historical, analysis.projected) : [];
   return (
     <section className="section">
       <h3>CRREM Plot</h3>
@@ -1284,7 +1284,6 @@ function CrremView({ ready, properties, selectedPropertyId, setSelectedPropertyI
               <option value="first_complete_year">First complete year</option>
               <option value="reporting_year">Reporting year</option>
               <option value="rolling_12">Rolling 12 months</option>
-              <option value="average_full_years">Average complete years</option>
             </select>
           </Field>
           {mode === "reporting_year" ? (
@@ -1296,7 +1295,7 @@ function CrremView({ ready, properties, selectedPropertyId, setSelectedPropertyI
           ) : mode === "first_complete_year" ? (
             <Field label="First complete year"><input value={availability.fullYears[0] || "No complete year"} disabled /></Field>
           ) : (
-            <Field label="Complete years"><input value={availability.fullYears.join(", ") || "No complete year"} disabled /></Field>
+            <Field label="Usage source"><input value={availability.usageSource || "No usage"} disabled /></Field>
           )}
           {mode === "rolling_12" ? (
             <Field label="Rolling end month"><input type="month" value={rollingEndMonth} onChange={(e) => setRollingEndMonth(e.target.value)} /></Field>
@@ -1347,6 +1346,7 @@ function CrremView({ ready, properties, selectedPropertyId, setSelectedPropertyI
               <table>
                 <tbody>
                   <tr><th>Baseline</th><td>{analysis.baseline.label}</td></tr>
+                  <tr><th>Usage source</th><td>{analysis.usageSource}</td></tr>
                   <tr><th>Region code</th><td>{analysis.regionCode}</td></tr>
                   <tr><th>Floor area</th><td>{money(property.total_floor_area)} m²</td></tr>
                   <tr><th>Electricity</th><td>{kwh(analysis.baseline.usage.electricity_kwh)} kWh/a</td></tr>
@@ -1360,7 +1360,7 @@ function CrremView({ ready, properties, selectedPropertyId, setSelectedPropertyI
             <div className="card">
               <h3>Method</h3>
               <p className="muted">
-                Historical points use every complete calendar year available from whole-building monthly usage. The baseline reference remains {analysis.baseline.label}. Future points only start after the latest complete actual year and hold annual energy demand flat from {analysis.projectionBase?.label || analysis.baseline.label} through 2050. On-site renewables consumed count in EUI with zero carbon; exported renewables create a capped grid export credit.
+                Historical points use every complete calendar year available from CRREM monthly usage. The app prefers whole-building records and only aggregates tenant rows when no whole-building records exist for the property. The baseline reference remains {analysis.baseline.label}. Future points only start after the latest complete actual year and hold annual energy demand flat from {analysis.projectionBase?.label || analysis.baseline.label} through 2050. On-site renewables consumed count in EUI with zero carbon; exported renewables create a capped grid export credit.
               </p>
               <p className="muted">CRREM data: {CRREM_DATA_VERSION}. {CRREM_DATA_ATTRIBUTION}</p>
             </div>
@@ -1646,7 +1646,7 @@ function CrremFormulaBlock() {
     ["Heating carbon", "heating kWh x heating carrier emission factor"],
     ["Cooling carbon", "cooling kWh x cooling carrier emission factor"],
     ["Export credit", "minimum of exported renewable kWh x grid emission factor, or electricity carbon"],
-    ["Net carbon", "electricity carbon + heating carbon + cooling carbon - export credit"],
+    ["Net carbon", "maximum of 0, or electricity carbon + heating carbon + cooling carbon - export credit"],
     ["Carbon intensity", "net carbon / gross floor area"],
     ["CRREM misalignment", "first year where asset intensity is greater than the CRREM pathway line"]
   ];
@@ -1719,7 +1719,7 @@ function chartPath(points, x, y, key) {
   return points.map((point, index) => `${index ? "L" : "M"} ${x(point.year).toFixed(1)} ${y(point[key]).toFixed(1)}`).join(" ");
 }
 
-function combineCrremSeries(historical, projected, baselineYear) {
+function combineCrremSeries(historical, projected) {
   const rows = [...(historical || []), ...(projected || [])];
   return rows.sort((a, b) => a.year - b.year);
 }

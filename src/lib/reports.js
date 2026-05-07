@@ -250,7 +250,7 @@ export async function downloadCrremPdfReport(db, property) {
   const monthlyUsage = getMonthlyUsage(db, property.id);
   const analysis = buildCrremAnalysis({ property, monthlyUsage, mode: "first_complete_year" });
   if (!analysis.ok) throw new Error(analysis.error || "CRREM analysis could not be generated.");
-  const points = combineCrremPdfSeries(analysis.historical, analysis.projected, analysis.baseline.year);
+  const points = combineCrremPdfSeries(analysis.historical, analysis.projected);
   const pdf = new SimplePdf({ orientation: "landscape" });
 
   const page = pdf.addPage();
@@ -269,7 +269,7 @@ export async function downloadCrremPdfReport(db, property) {
 
   pdf.text(page, "High level method", 42, 360, 13, true);
   pdf.wrapText(page, [
-    `This report uses whole-building monthly utility data. The default baseline is the first complete calendar year available. Complete actual calendar years are plotted wherever available. Future points start after ${analysis.projectionBase?.label || analysis.baseline.label} and hold annual electricity, heating, cooling and on-site renewable consumption flat from that year, then apply CRREM annual emission factors through 2050.`,
+    `This report uses CRREM monthly utility data. The app prefers whole-building records and only aggregates tenant rows when no whole-building records exist. The default baseline is the first complete calendar year available. Complete actual calendar years are plotted wherever available. Future points start after ${analysis.projectionBase?.label || analysis.baseline.label} and hold annual electricity, heating, cooling and on-site renewable consumption flat from that year, then apply CRREM annual emission factors through 2050.`,
     "EUI is total annual energy, including on-site renewable energy consumed, divided by gross internal area. Carbon intensity is net annual carbon emissions divided by gross internal area. Exported renewable electricity creates a grid export credit capped at grid electricity emissions."
   ].join(" "), 42, 342, 756, 8.5, 11);
 
@@ -828,7 +828,7 @@ function optionLabel(options, value) {
   return options.find((item) => item.value === value)?.label || value || "not set";
 }
 
-function combineCrremPdfSeries(historical, projected, baselineYear) {
+function combineCrremPdfSeries(historical, projected) {
   return [...(historical || []), ...(projected || [])]
     .sort((a, b) => a.year - b.year);
 }

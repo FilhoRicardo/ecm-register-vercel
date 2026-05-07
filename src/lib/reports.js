@@ -5,7 +5,8 @@ import reportTemplatePageUrl from "../assets/report-template-page.jpeg";
 import savillsLogoUrl from "../assets/savills-logo.svg";
 import { downloadBlob } from "./storage.js";
 import { kwh, money, slug } from "./format.js";
-import { getEcms, getEquipment, getImplementedSavings, getProperties, getTenants } from "./sqlite.js";
+import { buildCrremAnalysis, CRREM_DATA_ATTRIBUTION, CRREM_DATA_VERSION } from "./crrem.js";
+import { getEcms, getEquipment, getImplementedSavings, getMonthlyUsage, getProperties, getTenants } from "./sqlite.js";
 
 export const ECM_REVIEW_HEADERS = [
   "ecm_id",
@@ -236,6 +237,58 @@ export async function downloadPptxRegister(db, property) {
   addContactSlide(pptx, assets, pageNo);
   const blob = await pptx.write({ outputType: "blob" });
   downloadBlob(blob, `${slug(property.name)}_ECM_Register.pptx`);
+}
+
+export async function downloadCrremPdfReport(db, property) {
+  if (!property) return;
+  const monthlyUsage = getMonthlyUsage(db, property.id);
+  const analysis = buildCrremAnalysis({ property, monthlyUsage, mode: "average_full_years" });
+  if (!analysis.ok) throw new Error(analysis.error || "CRREM analysis could not be generated.");
+  const points = combineCrremPdfSeries(analysis.historical, analysis.projected, analysis.baseline.year);
+  const pdf = new SimplePdf();
+
+  const page = pdf.addPage();
+  pdf.text(page, "CRREM Alignment Report", 48, 790, 22, true);
+  pdf.text(page, cleanReportText(property.name), 48, 762, 14, true);
+  pdf.text(page, cleanReportText(property.address || ""), 48, 743, 10);
+  pdf.text(page, `CRREM setting: ${analysis.country} / ${analysis.propertyType} / ${analysis.regionCode}`, 48, 718, 10);
+  pdf.text(page, `Baseline: ${analysis.baseline.label}`, 48, 703, 10);
+
+  addPdfMetric(pdf, page, 48, 662, "Baseline EUI", `${formatPdfNumber(analysis.baselinePoint.eui)} kWh/m2/a`);
+  addPdfMetric(pdf, page, 200, 662, "Carbon intensity", `${formatPdfNumber(analysis.baselinePoint.carbonIntensity)} kgCO2e/m2/a`);
+  addPdfMetric(pdf, page, 352, 662, "CO2 misalignment", String(analysis.carbonMisalignmentYear));
+  addPdfMetric(pdf, page, 48, 594, "EUI misalignment", String(analysis.euiMisalignmentYear));
+  addPdfMetric(pdf, page, 200, 594, "Floor area", `${kwh(property.total_floor_area)} m2`);
+  addPdfMetric(pdf, page, 352, 594, "CRREM data", CRREM_DATA_VERSION);
+
+  pdf.text(page, "High level method", 48, 535, 14, true);
+  pdf.wrapText(page, [
+    "This report uses whole-building monthly utility data. Complete historical years are plotted as actual annual performance. The future projection holds annual electricity, heating and cooling demand flat from the selected baseline, then applies CRREM annual emission factors through 2050.",
+    "EUI is total annual energy divided by gross internal area. Carbon intensity is annual carbon emissions divided by gross internal area. The misalignment year is the first year where the asset value is above the CRREM pathway value."
+  ].join(" "), 48, 515, 490, 10, 13);
+
+  drawPdfChart(pdf, page, points, "carbonIntensity", "carbonPathway", "Carbon intensity pathway", 48, 305, 500, 170, "kgCO2e/m2/a");
+  drawPdfChart(pdf, page, points, "eui", "euiPathway", "Energy intensity pathway", 48, 92, 500, 170, "kWh/m2/a");
+  pdf.text(page, cleanReportText(CRREM_DATA_ATTRIBUTION), 48, 38, 7);
+
+  for (const chunk of chunks(points, 18)) {
+    const tablePage = pdf.addPage();
+    pdf.text(tablePage, "CRREM Year-by-Year Calculation Appendix", 48, 790, 16, true);
+    let y = 756;
+    addPdfTableHeader(pdf, tablePage, y);
+    y -= 22;
+    for (const point of chunk) {
+      const carbonKg = point.carbonIntensity * Number(property.total_floor_area || 0);
+      pdf.text(tablePage, String(point.year), 50, y, 8, true);
+      pdf.wrapText(tablePage, point.year === analysis.baseline.year ? "Selected baseline" : point.projected ? "Projected baseline" : "Actual year", 84, y, 70, 7, 9);
+      pdf.wrapText(tablePage, `${kwh(point.totalEnergy)} / ${kwh(property.total_floor_area)} = ${formatPdfNumber(point.eui)}`, 160, y, 116, 7, 9);
+      pdf.wrapText(tablePage, `${kwh(carbonKg)} / ${kwh(property.total_floor_area)} = ${formatPdfNumber(point.carbonIntensity)}`, 286, y, 128, 7, 9);
+      pdf.wrapText(tablePage, `CO2 ${formatPdfNumber(point.carbonPathway)} | EUI ${formatPdfNumber(point.euiPathway)}`, 424, y, 112, 7, 9);
+      y -= 38;
+    }
+  }
+
+  downloadBlob(pdf.toBlob(), `${slug(property.name)}_CRREM_Report.pdf`);
 }
 
 function addCoverSlide(pptx, assets, property) {
@@ -644,6 +697,163 @@ function addReviewInstructions(workbook) {
     sheet.getCell(rowNumber, 1).font = { name: "Arial", size: 10, bold: true };
     sheet.getCell(rowNumber, 2).alignment = { wrapText: true, vertical: "top" };
   }
+}
+
+function addPdfMetric(pdf, page, x, y, label, value) {
+  pdf.rect(page, x, y - 42, 130, 50, "F4F8F5", "B7C8BB");
+  pdf.text(page, label, x + 10, y - 9, 8, true, "5E755E");
+  pdf.wrapText(page, cleanReportText(value), x + 10, y - 25, 110, 13, 15, true);
+}
+
+function drawPdfChart(pdf, page, points, actualKey, pathwayKey, title, x, y, w, h, unit) {
+  const valid = points.filter((point) => Number.isFinite(point[actualKey]) && Number.isFinite(point[pathwayKey]));
+  if (!valid.length) return;
+  const minYear = Math.min(...valid.map((point) => point.year));
+  const maxYear = Math.max(...valid.map((point) => point.year));
+  const maxValue = Math.max(...valid.flatMap((point) => [point[actualKey], point[pathwayKey]])) * 1.12 || 1;
+  const px = (year) => x + ((year - minYear) / Math.max(1, maxYear - minYear)) * w;
+  const py = (value) => y + h - (Number(value) / maxValue) * h;
+
+  pdf.text(page, title, x, y + h + 24, 11, true);
+  pdf.text(page, unit, x + 360, y + h + 24, 8, false, "5E755E");
+  pdf.line(page, x, y, x, y + h, "BACBBE", 0.7);
+  pdf.line(page, x, y, x + w, y, "BACBBE", 0.7);
+
+  valid.forEach((point) => {
+    const xx = px(point.year);
+    pdf.line(page, xx, y, xx, y + h, "D8E2DA", 0.3, true);
+  });
+  for (let i = 0; i <= 4; i += 1) {
+    const value = (maxValue / 4) * i;
+    const yy = py(value);
+    pdf.line(page, x, yy, x + w, yy, "D8E2DA", 0.3, false);
+    pdf.text(page, formatPdfNumber(value), x - 34, yy - 2, 6, false, "5E755E");
+  }
+  drawPdfPath(pdf, page, valid, px, py, actualKey, "0F7891");
+  drawPdfPath(pdf, page, valid, px, py, pathwayKey, "6D28D9");
+  pdf.text(page, "Asset", x, y - 16, 7, true, "0F7891");
+  pdf.text(page, "CRREM pathway", x + 54, y - 16, 7, true, "6D28D9");
+}
+
+function drawPdfPath(pdf, page, points, x, y, key, color) {
+  for (let i = 1; i < points.length; i += 1) {
+    pdf.line(page, x(points[i - 1].year), y(points[i - 1][key]), x(points[i].year), y(points[i][key]), color, 1.4);
+  }
+}
+
+function addPdfTableHeader(pdf, page, y) {
+  pdf.rect(page, 48, y - 14, 500, 20, "EFF6F0", "BACBBE");
+  pdf.text(page, "Year", 50, y - 8, 7, true);
+  pdf.text(page, "Source", 84, y - 8, 7, true);
+  pdf.text(page, "EUI formula", 160, y - 8, 7, true);
+  pdf.text(page, "Carbon formula", 286, y - 8, 7, true);
+  pdf.text(page, "CRREM pathway", 424, y - 8, 7, true);
+}
+
+function combineCrremPdfSeries(historical, projected, baselineYear) {
+  return [...(historical || []).filter((point) => point.year < baselineYear), ...(projected || [])]
+    .sort((a, b) => a.year - b.year);
+}
+
+function formatPdfNumber(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "";
+  return n.toLocaleString(undefined, { maximumFractionDigits: 1, minimumFractionDigits: 0 });
+}
+
+class SimplePdf {
+  constructor() {
+    this.width = 595.28;
+    this.height = 841.89;
+    this.pages = [];
+  }
+
+  addPage() {
+    const page = [];
+    this.pages.push(page);
+    return page;
+  }
+
+  text(page, text, x, y, size = 10, bold = false, color = PPT_DARK) {
+    page.push(`${pdfColor(color, "rg")} BT /${bold ? "F2" : "F1"} ${size} Tf ${x.toFixed(2)} ${y.toFixed(2)} Td (${escapePdf(cleanReportText(text))}) Tj ET`);
+  }
+
+  wrapText(page, text, x, y, w, size = 10, lineHeight = 13, bold = false, color = PPT_DARK) {
+    const words = cleanReportText(text).split(/\s+/).filter(Boolean);
+    const lines = [];
+    let line = "";
+    const maxChars = Math.max(12, Math.floor(w / (size * 0.48)));
+    for (const word of words) {
+      const next = line ? `${line} ${word}` : word;
+      if (next.length > maxChars && line) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = next;
+      }
+    }
+    if (line) lines.push(line);
+    lines.forEach((item, index) => this.text(page, item, x, y - index * lineHeight, size, bold, color));
+    return y - lines.length * lineHeight;
+  }
+
+  rect(page, x, y, w, h, fill = "FFFFFF", stroke = "BACBBE") {
+    page.push(`q ${pdfColor(fill, "rg")} ${pdfColor(stroke, "RG")} 0.6 w ${x.toFixed(2)} ${y.toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re B Q`);
+  }
+
+  line(page, x1, y1, x2, y2, color = "BACBBE", width = 0.6, dashed = false) {
+    page.push(`q ${pdfColor(color, "RG")} ${width} w ${dashed ? "[2 4] 0 d" : "[] 0 d"} ${x1.toFixed(2)} ${y1.toFixed(2)} m ${x2.toFixed(2)} ${y2.toFixed(2)} l S Q`);
+  }
+
+  toBlob() {
+    const objects = [];
+    objects.push("<< /Type /Catalog /Pages 2 0 R >>");
+    const kids = this.pages.map((_, index) => `${5 + index * 2} 0 R`).join(" ");
+    objects.push(`<< /Type /Pages /Kids [${kids}] /Count ${this.pages.length} >>`);
+    objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+    objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
+    this.pages.forEach((page, index) => {
+      const pageObj = 5 + index * 2;
+      const contentObj = pageObj + 1;
+      objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${this.width} ${this.height}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentObj} 0 R >>`);
+      const stream = page.join("\n");
+      objects.push(`<< /Length ${byteLength(stream)} >>\nstream\n${stream}\nendstream`);
+    });
+
+    let pdf = "%PDF-1.4\n";
+    const offsets = [0];
+    objects.forEach((object, index) => {
+      offsets.push(byteLength(pdf));
+      pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+    });
+    const xref = byteLength(pdf);
+    pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+    offsets.slice(1).forEach((offset) => {
+      pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+    });
+    pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+    return new Blob([pdf], { type: "application/pdf" });
+  }
+}
+
+function pdfColor(hex, operator) {
+  const clean = String(hex || "000000").replace("#", "");
+  const r = parseInt(clean.slice(0, 2), 16) / 255;
+  const g = parseInt(clean.slice(2, 4), 16) / 255;
+  const b = parseInt(clean.slice(4, 6), 16) / 255;
+  return `${r.toFixed(3)} ${g.toFixed(3)} ${b.toFixed(3)} ${operator}`;
+}
+
+function escapePdf(value) {
+  return String(value ?? "")
+    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, " ")
+    .replace(/\\/g, "\\\\")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)");
+}
+
+function byteLength(value) {
+  return new TextEncoder().encode(value).length;
 }
 
 function propertyLabelForExport(prop) {

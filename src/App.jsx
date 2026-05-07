@@ -32,7 +32,7 @@ import {
 import { downloadBlob, ensurePermission, idbGet, idbSet, permissionState, supportsFileSystemAccess, writeFile } from "./lib/storage.js";
 import { listMarkdownFiles, routeCalculationFile, writeTextIntoFolder } from "./lib/files.js";
 import { buildEcmMarkdown, buildMeetingMarkdown, buildSavingMarkdown, ecmFilename, extractMeetingSections, meetingFilename, replaceMeetingSections, savingFilename } from "./lib/markdown.js";
-import { downloadEcmReviewWorkbook, downloadExcelRegister, downloadPptxRegister, parseEcmReviewWorkbook } from "./lib/reports.js";
+import { downloadCrremPdfReport, downloadEcmReviewWorkbook, downloadExcelRegister, downloadPptxRegister, parseEcmReviewWorkbook } from "./lib/reports.js";
 import { EQUIPMENT_TYPE_TO_BRICK_CLASS, kwh, money, todayIso, utilityCost } from "./lib/format.js";
 import {
   buildCrremAnalysis,
@@ -63,7 +63,7 @@ const NAV = [
   ["ecms", "⚡ ECMs"],
   ["savings", "💶 Implemented Savings"],
   ["usage", "📊 Monthly Usage"],
-  ["crrem", "CRREM Plot"],
+  ["crrem", "🌍 CRREM Plot"],
   ["meetings", "📝 Monthly Meetings"],
   ["reports", "📤 Reports"],
   ["database", "🧪 SQLite Lab"],
@@ -1225,7 +1225,8 @@ function CrremView({ ready, properties, selectedPropertyId, setSelectedPropertyI
   );
 
   useEffect(() => {
-    if (availability.fullYears.length && !reportingYear) setReportingYear(String(availability.fullYears.at(-1)));
+    const latestFullYear = availability.fullYears.at(-1);
+    if (latestFullYear && !availability.fullYears.includes(Number(reportingYear))) setReportingYear(String(latestFullYear));
     if (availability.latestMonth && !rollingEndMonth) setRollingEndMonth(availability.latestMonth);
   }, [availability.fullYears, availability.latestMonth, reportingYear, rollingEndMonth]);
 
@@ -1328,6 +1329,7 @@ function CrremView({ ready, properties, selectedPropertyId, setSelectedPropertyI
               <p className="muted">CRREM data: {CRREM_DATA_VERSION}. {CRREM_DATA_ATTRIBUTION}</p>
             </div>
           </div>
+          <CrremCalculationTable analysis={analysis} points={chartPoints} />
         </>
       )}
     </section>
@@ -1393,6 +1395,18 @@ function ReportsView({ ready, db, properties, selectedProperty, setSelectedPrope
             <input type="file" accept=".xlsx" onChange={importEcmReviewWorkbook} disabled={busy} style={{ display: "none" }} />
           </label>
           <button className="btn" onClick={() => downloadPptxRegister(db, selectedProperty)}>PPTX Report - Selected Property</button>
+          <button
+            className="btn"
+            onClick={async () => {
+              try {
+                await downloadCrremPdfReport(db, selectedProperty);
+              } catch (error) {
+                window.alert(error.message || String(error));
+              }
+            }}
+          >
+            PDF CRREM Report
+          </button>
         </div>
         <p className="muted">Exports download locally. The ECM list template is designed for Excel review and can be imported back using the stable ecm_id column.</p>
       </div>
@@ -1498,7 +1512,7 @@ function CrremChart({ title, unit, points, actualKey, pathwayKey, baselineYear }
   if (!valid.length) return <div className="card"><h3>{title}</h3><p className="muted">No chart data available.</p></div>;
   const width = 760;
   const height = 320;
-  const pad = { left: 54, right: 20, top: 26, bottom: 40 };
+  const pad = { left: 54, right: 20, top: 26, bottom: 62 };
   const minYear = Math.min(...valid.map((point) => point.year));
   const maxYear = Math.max(...valid.map((point) => point.year));
   const maxValue = Math.max(...valid.flatMap((point) => [Number(point[actualKey]), Number(point[pathwayKey])])) * 1.12 || 1;
@@ -1506,7 +1520,7 @@ function CrremChart({ title, unit, points, actualKey, pathwayKey, baselineYear }
   const y = (value) => height - pad.bottom - (Number(value) / maxValue) * (height - pad.top - pad.bottom);
   const actualPath = chartPath(valid, x, y, actualKey);
   const pathwayPath = chartPath(valid, x, y, pathwayKey);
-  const ticks = [minYear, Math.round((minYear + maxYear) / 2), maxYear];
+  const ticks = valid.map((point) => point.year);
   return (
     <div className="card chart-card">
       <div className="chart-head">
@@ -1516,6 +1530,20 @@ function CrremChart({ title, unit, points, actualKey, pathwayKey, baselineYear }
       <svg className="crrem-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={title}>
         <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} className="chart-axis" />
         <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} className="chart-axis" />
+        {ticks.map((year) => (
+          <g key={`year-${year}`}>
+            <line x1={x(year)} y1={pad.top} x2={x(year)} y2={height - pad.bottom} className="chart-year-gridline" />
+            <text
+              x={x(year) + 3}
+              y={height - 38}
+              className="chart-label chart-year-label"
+              textAnchor="start"
+              transform={`rotate(45 ${x(year) + 3} ${height - 38})`}
+            >
+              {year}
+            </text>
+          </g>
+        ))}
         {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
           const value = maxValue * ratio;
           const yy = y(value);
@@ -1526,9 +1554,6 @@ function CrremChart({ title, unit, points, actualKey, pathwayKey, baselineYear }
             </g>
           );
         })}
-        {ticks.map((year) => (
-          <text key={year} x={x(year)} y={height - 14} className="chart-label" textAnchor="middle">{year}</text>
-        ))}
         {baselineYear ? (
           <g>
             <line x1={x(baselineYear)} y1={pad.top} x2={x(baselineYear)} y2={height - pad.bottom} className="chart-baseline" />
@@ -1541,6 +1566,51 @@ function CrremChart({ title, unit, points, actualKey, pathwayKey, baselineYear }
       <div className="chart-legend">
         <span><i className="legend-dot actual"></i>Asset</span>
         <span><i className="legend-dot pathway"></i>CRREM pathway</span>
+      </div>
+    </div>
+  );
+}
+
+function CrremCalculationTable({ analysis, points }) {
+  const area = Number(analysis.property.total_floor_area || 0);
+  return (
+    <div className="card crrem-calculation-card" style={{ marginTop: 14 }}>
+      <h3>Calculation Method</h3>
+      <p className="muted">
+        This table is the audit trail for the CRREM numbers. Historical rows use complete calendar-year building usage. Projected rows reuse the selected baseline kWh and apply the CRREM emission factor for that year.
+      </p>
+      <div className="calculation-table-wrap">
+        <table className="calculation-table">
+          <thead>
+            <tr>
+              <th>Year</th>
+              <th>Source</th>
+              <th>EUI calculation</th>
+              <th>Carbon calculation</th>
+              <th>Pathway comparison</th>
+            </tr>
+          </thead>
+          <tbody>
+            {points.map((point) => {
+              const energyFormula = `(${kwh(point.electricity)} + ${kwh(point.heating)} + ${kwh(point.cooling)}) / ${kwh(area)} = ${formatCrremNumber(point.eui)} kWh/m²/a`;
+              const carbonKg = (Number(point.carbonIntensity || 0) * area);
+              const carbonFormula = `(${kwh(point.electricity)} x ${formatCrremFactor(point.gridEf)}) + (${kwh(point.heating)} x ${formatCrremFactor(point.heatEf)}) + (${kwh(point.cooling)} x ${formatCrremFactor(point.coolEf)}) = ${kwh(carbonKg)} kgCO2e; ${kwh(carbonKg)} / ${kwh(area)} = ${formatCrremNumber(point.carbonIntensity)} kgCO2e/m²/a`;
+              return (
+                <tr key={point.year}>
+                  <td>{point.year}</td>
+                  <td>{point.year === analysis.baseline.year ? "Selected baseline" : point.projected ? "Projected from baseline" : "Actual complete year"}</td>
+                  <td>{energyFormula}</td>
+                  <td>{carbonFormula}</td>
+                  <td>
+                    CO2: {formatCrremNumber(point.carbonIntensity)} vs {formatCrremNumber(point.carbonPathway)} kgCO2e/m²/a.
+                    <br />
+                    EUI: {formatCrremNumber(point.eui)} vs {formatCrremNumber(point.euiPathway)} kWh/m²/a.
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -1559,6 +1629,12 @@ function formatCrremNumber(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "";
   return n.toLocaleString(undefined, { maximumFractionDigits: 1, minimumFractionDigits: 0 });
+}
+
+function formatCrremFactor(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "";
+  return n.toFixed(4);
 }
 
 function Field({ label, children, className = "" }) {

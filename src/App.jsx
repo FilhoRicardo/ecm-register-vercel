@@ -932,48 +932,48 @@ function PropertiesView({ ready, properties, form, setForm, save, remove }) {
       <div className="grid two">
         <div className="card">
           <form onSubmit={save}>
-            <Field label="Name"><input value={form.name} onChange={(e) => set("name", e.target.value)} required /></Field>
-            <Field label="Address"><input value={form.address} onChange={(e) => set("address", e.target.value)} /></Field>
+            <Field label="Name" help="Enter the building or asset name used in reports and filters."><input value={form.name} onChange={(e) => set("name", e.target.value)} required /></Field>
+            <Field label="Address" help="Enter the full property address for report headers and CRREM country inference."><input value={form.address} onChange={(e) => set("address", e.target.value)} /></Field>
             <div className="grid two">
-              <Field label="CRREM country">
+              <Field label="CRREM country" help="Select the country used to choose the CRREM pathway and grid emission factors.">
                 <select value={form.crrem_country || ""} onChange={(e) => set("crrem_country", e.target.value)}>
                   <option value="">{inferredCountry ? `Use inferred: ${inferredCountry}` : "Select country..."}</option>
                   {CRREM_COUNTRIES.map((country) => <option key={country} value={country}>{country}</option>)}
                 </select>
               </Field>
-              <Field label="CRREM property type">
+              <Field label="CRREM property type" help="Select the CRREM asset class that best matches the property use.">
                 <select value={form.crrem_property_type || "Office"} onChange={(e) => set("crrem_property_type", e.target.value)}>
                   {CRREM_PROPERTY_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
                 </select>
               </Field>
             </div>
             <div className="grid two">
-              <Field label="Heating carrier">
+              <Field label="Heating carrier" help="Select the energy carrier behind the heating kWh entered in monthly usage.">
                 <select value={form.heating_carrier || "district_heating"} onChange={(e) => set("heating_carrier", e.target.value)}>
                   {HEATING_CARRIER_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
                 </select>
               </Field>
-              <Field label="Cooling carrier">
+              <Field label="Cooling carrier" help="Select the energy carrier behind the cooling kWh entered in monthly usage.">
                 <select value={form.cooling_carrier || "district_cooling"} onChange={(e) => set("cooling_carrier", e.target.value)}>
                   {COOLING_CARRIER_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
                 </select>
               </Field>
             </div>
             <div className="grid two">
-              <Field label="Heating EF override kgCO2e/kWh"><input type="number" step="0.0001" value={form.heating_emission_factor_kgco2e_per_kwh ?? ""} onChange={(e) => set("heating_emission_factor_kgco2e_per_kwh", e.target.value)} /></Field>
-              <Field label="Cooling EF override kgCO2e/kWh"><input type="number" step="0.0001" value={form.cooling_emission_factor_kgco2e_per_kwh ?? ""} onChange={(e) => set("cooling_emission_factor_kgco2e_per_kwh", e.target.value)} /></Field>
+              <Field label="Heating EF override kgCO2e/kWh" help="Optional. Leave blank to use the app default for the selected heating carrier."><input type="number" step="0.0001" value={form.heating_emission_factor_kgco2e_per_kwh ?? ""} onChange={(e) => set("heating_emission_factor_kgco2e_per_kwh", e.target.value)} /></Field>
+              <Field label="Cooling EF override kgCO2e/kWh" help="Optional. Leave blank to use the app default for the selected cooling carrier."><input type="number" step="0.0001" value={form.cooling_emission_factor_kgco2e_per_kwh ?? ""} onChange={(e) => set("cooling_emission_factor_kgco2e_per_kwh", e.target.value)} /></Field>
             </div>
             <div className="grid two">
-              <Field label="On-site renewable consumed kWh/a"><input type="number" step="0.01" value={form.renewable_consumed_kwh ?? ""} onChange={(e) => set("renewable_consumed_kwh", e.target.value)} /></Field>
-              <Field label="On-site renewable exported kWh/a"><input type="number" step="0.01" value={form.renewable_exported_kwh ?? ""} onChange={(e) => set("renewable_exported_kwh", e.target.value)} /></Field>
+              <Field label="On-site renewable consumed kWh/a" help="Annual renewable energy generated and used on site. Counts in EUI with zero carbon."><input type="number" step="0.01" value={form.renewable_consumed_kwh ?? ""} onChange={(e) => set("renewable_consumed_kwh", e.target.value)} /></Field>
+              <Field label="On-site renewable exported kWh/a" help="Annual renewable electricity exported. Creates a capped grid carbon credit."><input type="number" step="0.01" value={form.renewable_exported_kwh ?? ""} onChange={(e) => set("renewable_exported_kwh", e.target.value)} /></Field>
             </div>
             <div className="grid two">
-              <Field label="Total floor area m²"><input type="number" step="0.01" value={form.total_floor_area} onChange={(e) => set("total_floor_area", e.target.value)} /></Field>
-              <Field label="Electricity cost EUR/kWh"><input type="number" step="0.0001" value={form.elec_cost_eur_per_kwh} onChange={(e) => set("elec_cost_eur_per_kwh", e.target.value)} /></Field>
-              <Field label="Heating cost EUR/kWh"><input type="number" step="0.0001" value={form.heating_cost_eur_per_kwh} onChange={(e) => set("heating_cost_eur_per_kwh", e.target.value)} /></Field>
-              <Field label="Cooling cost EUR/kWh"><input type="number" step="0.0001" value={form.cooling_cost_eur_per_kwh} onChange={(e) => set("cooling_cost_eur_per_kwh", e.target.value)} /></Field>
+              <Field label="Total floor area m²" help="Enter gross internal area in square metres. CRREM EUI and carbon intensity divide by this number."><input type="number" step="0.01" value={form.total_floor_area} onChange={(e) => set("total_floor_area", e.target.value)} /></Field>
+              <Field label="Electricity cost EUR/kWh" help="Enter the electricity unit cost used to calculate ECM annual cost savings."><input type="number" step="0.0001" value={form.elec_cost_eur_per_kwh} onChange={(e) => set("elec_cost_eur_per_kwh", e.target.value)} /></Field>
+              <Field label="Heating cost EUR/kWh" help="Enter the heating unit cost used to calculate heating ECM savings."><input type="number" step="0.0001" value={form.heating_cost_eur_per_kwh} onChange={(e) => set("heating_cost_eur_per_kwh", e.target.value)} /></Field>
+              <Field label="Cooling cost EUR/kWh" help="Enter the cooling unit cost used to calculate cooling ECM savings."><input type="number" step="0.0001" value={form.cooling_cost_eur_per_kwh} onChange={(e) => set("cooling_cost_eur_per_kwh", e.target.value)} /></Field>
             </div>
-            <Field label="Notes"><textarea value={form.notes} onChange={(e) => set("notes", e.target.value)} /></Field>
+            <Field label="Notes" help="Use this for property codes, assumptions, or any context you want kept with the property."><textarea value={form.notes} onChange={(e) => set("notes", e.target.value)} /></Field>
             <div className="toolbar">
               <button className="btn primary">Save Property</button>
               <button className="btn" type="button" onClick={() => setForm(EMPTY_PROPERTY)}>New Property</button>
@@ -1360,11 +1360,12 @@ function CrremView({ ready, properties, selectedPropertyId, setSelectedPropertyI
             <div className="card">
               <h3>Method</h3>
               <p className="muted">
-                Historical points use complete calendar years from whole-building monthly usage. Future points hold annual energy demand flat from the selected baseline through 2050 and apply the CRREM grid decarbonisation factors. On-site renewables consumed count in EUI with zero carbon; exported renewables create a capped grid export credit.
+                Historical points use every complete calendar year available from whole-building monthly usage. The baseline reference remains {analysis.baseline.label}. Future points only start after the latest complete actual year and hold annual energy demand flat from {analysis.projectionBase?.label || analysis.baseline.label} through 2050. On-site renewables consumed count in EUI with zero carbon; exported renewables create a capped grid export credit.
               </p>
               <p className="muted">CRREM data: {CRREM_DATA_VERSION}. {CRREM_DATA_ATTRIBUTION}</p>
             </div>
           </div>
+          <CrremFormulaBlock />
           <CrremCalculationTable analysis={analysis} points={chartPoints} />
         </>
       )}
@@ -1637,6 +1638,33 @@ function CrremCalculationTable({ analysis, points }) {
   );
 }
 
+function CrremFormulaBlock() {
+  const formulas = [
+    ["Total energy", "electricity kWh + heating kWh + cooling kWh + on-site renewable consumed kWh"],
+    ["EUI", "total energy / gross floor area"],
+    ["Electricity carbon", "electricity kWh x electricity emission factor"],
+    ["Heating carbon", "heating kWh x heating carrier emission factor"],
+    ["Cooling carbon", "cooling kWh x cooling carrier emission factor"],
+    ["Export credit", "minimum of exported renewable kWh x grid emission factor, or electricity carbon"],
+    ["Net carbon", "electricity carbon + heating carbon + cooling carbon - export credit"],
+    ["Carbon intensity", "net carbon / gross floor area"],
+    ["CRREM misalignment", "first year where asset intensity is greater than the CRREM pathway line"]
+  ];
+  return (
+    <div className="card formula-card" style={{ marginTop: 14 }}>
+      <h3>Calculation Formulas</h3>
+      <div className="formula-grid">
+        {formulas.map(([label, formula]) => (
+          <div className="formula-row" key={label}>
+            <strong>{label}</strong>
+            <span>{formula}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function buildCrremCalculationRows(analysis, points) {
   const area = Number(analysis.property.total_floor_area || 0);
   const hasHeating = points.some((point) => Number(point.heating || 0) !== 0) || analysis.settings.heatingCarrier !== "none";
@@ -1683,7 +1711,7 @@ function buildCrremCalculationRows(analysis, points) {
 
 function crremPointSource(point, baselineYear) {
   if (point.year === baselineYear) return "Selected baseline";
-  if (point.projected) return "Projected from baseline";
+  if (point.projected) return "Projected from latest complete actual";
   return "Actual complete year";
 }
 
@@ -1692,7 +1720,7 @@ function chartPath(points, x, y, key) {
 }
 
 function combineCrremSeries(historical, projected, baselineYear) {
-  const rows = [...(historical || []).filter((point) => point.year < baselineYear), ...(projected || [])];
+  const rows = [...(historical || []), ...(projected || [])];
   return rows.sort((a, b) => a.year - b.year);
 }
 
@@ -1708,8 +1736,14 @@ function formatCrremFactor(value) {
   return n.toFixed(4);
 }
 
-function Field({ label, children, className = "" }) {
-  return <div className={`field ${className}`.trim()}><label>{label}</label>{children}</div>;
+function Field({ label, children, className = "", help = "" }) {
+  return (
+    <div className={`field ${className}`.trim()}>
+      <label>{label}</label>
+      {children}
+      {help ? <p className="field-help">{help}</p> : null}
+    </div>
+  );
 }
 
 function propertyToForm(property) {

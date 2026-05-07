@@ -269,7 +269,7 @@ export async function downloadCrremPdfReport(db, property) {
 
   pdf.text(page, "High level method", 42, 360, 13, true);
   pdf.wrapText(page, [
-    "This report uses whole-building monthly utility data. The default baseline is the first complete calendar year available. Future points hold annual electricity, heating, cooling and on-site renewable consumption flat from that baseline, then apply CRREM annual emission factors through 2050.",
+    `This report uses whole-building monthly utility data. The default baseline is the first complete calendar year available. Complete actual calendar years are plotted wherever available. Future points start after ${analysis.projectionBase?.label || analysis.baseline.label} and hold annual electricity, heating, cooling and on-site renewable consumption flat from that year, then apply CRREM annual emission factors through 2050.`,
     "EUI is total annual energy, including on-site renewable energy consumed, divided by gross internal area. Carbon intensity is net annual carbon emissions divided by gross internal area. Exported renewable electricity creates a grid export credit capped at grid electricity emissions."
   ].join(" "), 42, 342, 756, 8.5, 11);
 
@@ -717,7 +717,7 @@ function drawPdfChart(pdf, page, points, actualKey, pathwayKey, title, x, y, w, 
   const maxYear = Math.max(...valid.map((point) => point.year));
   const maxValue = Math.max(...valid.flatMap((point) => [point[actualKey], point[pathwayKey]])) * 1.12 || 1;
   const px = (year) => x + ((year - minYear) / Math.max(1, maxYear - minYear)) * w;
-  const py = (value) => y + h - (Number(value) / maxValue) * h;
+  const py = (value) => y + (Number(value) / maxValue) * h;
 
   pdf.text(page, title, x, y + h + 24, 11, true);
   pdf.text(page, unit, x + w - 106, y + h + 24, 8, false, "5E755E");
@@ -820,7 +820,7 @@ function addPdfMatrixTable(pdf, page, points, rows, x, y) {
 
 function crremPdfPointSource(point, baselineYear) {
   if (point.year === baselineYear) return "Selected baseline";
-  if (point.projected) return "Projected from baseline";
+  if (point.projected) return "Projected from latest complete actual";
   return "Actual complete year";
 }
 
@@ -829,7 +829,7 @@ function optionLabel(options, value) {
 }
 
 function combineCrremPdfSeries(historical, projected, baselineYear) {
-  return [...(historical || []).filter((point) => point.year < baselineYear), ...(projected || [])]
+  return [...(historical || []), ...(projected || [])]
     .sort((a, b) => a.year - b.year);
 }
 

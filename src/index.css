@@ -161,6 +161,12 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
 }
 .field { display: grid; gap: 5px; margin-bottom: 11px; }
 .field label { font-size: 10px; text-transform: uppercase; font-weight: 900; color: #64748b; letter-spacing: 0.08em; }
+.field-help {
+  margin: 0;
+  color: #7c8aa5;
+  font-size: 11px;
+  line-height: 1.35;
+}
 .input, .field input, .field select, .field textarea {
   width: 100%;
   color: #e2e8f0;
@@ -273,6 +279,28 @@ select option {
   border: 1px solid rgba(255,255,255,0.07);
   border-radius: 8px;
 }
+.formula-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.formula-row {
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.025);
+  padding: 9px 10px;
+}
+.formula-row strong {
+  display: block;
+  color: #e2e8f0;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.formula-row span {
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.35;
+}
 .calculation-table {
   border: 0;
   min-width: 980px;
@@ -353,6 +381,7 @@ tr:hover td { background: rgba(124,58,237,0.055); }
   .mobile-nav { display: block; }
   .hero { flex-direction: column; }
   .grid.two, .grid.three, .grid.four { grid-template-columns: 1fr; }
+  .formula-grid { grid-template-columns: 1fr; }
   .meeting-note-card { min-height: auto; }
   .meeting-note-controls { grid-template-columns: 1fr; }
   .meeting-note-field textarea,

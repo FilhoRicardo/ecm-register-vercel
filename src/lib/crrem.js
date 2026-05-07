@@ -89,19 +89,34 @@ export function buildCrremAnalysis({ property, monthlyUsage, mode = "first_compl
   if (!baseline.ok) return baseline;
 
   const historicalAnnual = annualUsageByYear(monthlyUsage, property.id);
-  const historical = Object.entries(historicalAnnual)
-    .filter(([, usage]) => usage.months.size === 12)
-    .map(([year, usage]) => calculateYearPoint(Number(year), usage, area, pathway, country, property, false))
+  const completeYears = Object.keys(historicalAnnual)
+    .map(Number)
+    .filter((year) => historicalAnnual[year].months.size === 12)
+    .sort((a, b) => a - b);
+  const historical = completeYears
+    .map((year) => [year, historicalAnnual[year]])
+    .map(([year, usage]) => calculateYearPoint(Number(year), usage.totals, area, pathway, country, property, false))
     .filter(Boolean);
 
-  const startYear = Math.max(CRREM_YEARS[0], baseline.year);
+  const latestActualProjectionYear = completeYears.filter((year) => year >= baseline.year).at(-1);
+  const projectionBase = latestActualProjectionYear
+    ? {
+        year: latestActualProjectionYear,
+        label: `${latestActualProjectionYear} latest complete actual year`,
+        usage: historicalAnnual[latestActualProjectionYear].totals
+      }
+    : baseline;
+  const startYear = Math.max(CRREM_YEARS[0], projectionBase.year + (latestActualProjectionYear ? 1 : 0));
   const projected = [];
   for (let year = startYear; year <= 2050; year += 1) {
-    projected.push(calculateYearPoint(year, baseline.usage, area, pathway, country, property, true));
+    projected.push(calculateYearPoint(year, projectionBase.usage, area, pathway, country, property, true));
   }
 
   const baselinePoint = calculateYearPoint(baseline.year, baseline.usage, area, pathway, country, property, false);
-  const projectedWithBaseline = projected.filter((point) => point.year >= baseline.year);
+  const alignmentSeries = [
+    ...historical.filter((point) => point.year >= baseline.year),
+    ...projected
+  ].sort((a, b) => a.year - b.year);
 
   return {
     ok: true,
@@ -112,11 +127,12 @@ export function buildCrremAnalysis({ property, monthlyUsage, mode = "first_compl
     settings,
     mode,
     baseline,
+    projectionBase,
     baselinePoint,
     historical,
     projected,
-    carbonMisalignmentYear: firstCrossing(projectedWithBaseline, "carbonIntensity", "carbonPathway"),
-    euiMisalignmentYear: firstCrossing(projectedWithBaseline, "eui", "euiPathway")
+    carbonMisalignmentYear: firstCrossing(alignmentSeries, "carbonIntensity", "carbonPathway"),
+    euiMisalignmentYear: firstCrossing(alignmentSeries, "eui", "euiPathway")
   };
 }
 

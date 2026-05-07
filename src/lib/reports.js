@@ -242,49 +242,48 @@ export async function downloadPptxRegister(db, property) {
 export async function downloadCrremPdfReport(db, property) {
   if (!property) return;
   const monthlyUsage = getMonthlyUsage(db, property.id);
-  const analysis = buildCrremAnalysis({ property, monthlyUsage, mode: "average_full_years" });
+  const analysis = buildCrremAnalysis({ property, monthlyUsage, mode: "first_complete_year" });
   if (!analysis.ok) throw new Error(analysis.error || "CRREM analysis could not be generated.");
   const points = combineCrremPdfSeries(analysis.historical, analysis.projected, analysis.baseline.year);
-  const pdf = new SimplePdf();
+  const pdf = new SimplePdf({ orientation: "landscape" });
 
   const page = pdf.addPage();
-  pdf.text(page, "CRREM Alignment Report", 48, 790, 22, true);
-  pdf.text(page, cleanReportText(property.name), 48, 762, 14, true);
-  pdf.text(page, cleanReportText(property.address || ""), 48, 743, 10);
-  pdf.text(page, `CRREM setting: ${analysis.country} / ${analysis.propertyType} / ${analysis.regionCode}`, 48, 718, 10);
-  pdf.text(page, `Baseline: ${analysis.baseline.label}`, 48, 703, 10);
+  pdf.text(page, "CRREM Alignment Report", 42, 548, 21, true);
+  pdf.text(page, cleanReportText(property.name), 42, 522, 14, true);
+  pdf.text(page, cleanReportText(property.address || ""), 42, 504, 9);
+  pdf.text(page, `CRREM setting: ${analysis.country} / ${analysis.propertyType} / ${analysis.regionCode}`, 42, 486, 9);
+  pdf.text(page, `Baseline: ${analysis.baseline.label}`, 42, 471, 9);
 
-  addPdfMetric(pdf, page, 48, 662, "Baseline EUI", `${formatPdfNumber(analysis.baselinePoint.eui)} kWh/m2/a`);
-  addPdfMetric(pdf, page, 200, 662, "Carbon intensity", `${formatPdfNumber(analysis.baselinePoint.carbonIntensity)} kgCO2e/m2/a`);
-  addPdfMetric(pdf, page, 352, 662, "CO2 misalignment", String(analysis.carbonMisalignmentYear));
-  addPdfMetric(pdf, page, 48, 594, "EUI misalignment", String(analysis.euiMisalignmentYear));
-  addPdfMetric(pdf, page, 200, 594, "Floor area", `${kwh(property.total_floor_area)} m2`);
-  addPdfMetric(pdf, page, 352, 594, "CRREM data", CRREM_DATA_VERSION);
+  addPdfMetric(pdf, page, 42, 433, "Baseline EUI", `${formatPdfNumber(analysis.baselinePoint.eui)} kWh/m2/a`, 118);
+  addPdfMetric(pdf, page, 174, 433, "Carbon intensity", `${formatPdfNumber(analysis.baselinePoint.carbonIntensity)} kgCO2e/m2/a`, 118);
+  addPdfMetric(pdf, page, 306, 433, "CO2 misalignment", String(analysis.carbonMisalignmentYear), 118);
+  addPdfMetric(pdf, page, 438, 433, "EUI misalignment", String(analysis.euiMisalignmentYear), 118);
+  addPdfMetric(pdf, page, 570, 433, "Floor area", `${kwh(property.total_floor_area)} m2`, 118);
+  addPdfMetric(pdf, page, 702, 433, "CRREM data", CRREM_DATA_VERSION, 98);
 
-  pdf.text(page, "High level method", 48, 535, 14, true);
+  pdf.text(page, "High level method", 42, 360, 13, true);
   pdf.wrapText(page, [
-    "This report uses whole-building monthly utility data. Complete historical years are plotted as actual annual performance. The future projection holds annual electricity, heating and cooling demand flat from the selected baseline, then applies CRREM annual emission factors through 2050.",
-    "EUI is total annual energy divided by gross internal area. Carbon intensity is annual carbon emissions divided by gross internal area. The misalignment year is the first year where the asset value is above the CRREM pathway value."
-  ].join(" "), 48, 515, 490, 10, 13);
+    "This report uses whole-building monthly utility data. The default baseline is the first complete calendar year available. Future points hold annual electricity, heating, cooling and on-site renewable consumption flat from that baseline, then apply CRREM annual emission factors through 2050.",
+    "EUI is total annual energy, including on-site renewable energy consumed, divided by gross internal area. Carbon intensity is net annual carbon emissions divided by gross internal area. Exported renewable electricity creates a grid export credit capped at grid electricity emissions."
+  ].join(" "), 42, 342, 756, 8.5, 11);
 
-  drawPdfChart(pdf, page, points, "carbonIntensity", "carbonPathway", "Carbon intensity pathway", 48, 305, 500, 170, "kgCO2e/m2/a");
-  drawPdfChart(pdf, page, points, "eui", "euiPathway", "Energy intensity pathway", 48, 92, 500, 170, "kWh/m2/a");
-  pdf.text(page, cleanReportText(CRREM_DATA_ATTRIBUTION), 48, 38, 7);
+  drawPdfChart(pdf, page, points, "carbonIntensity", "carbonPathway", "Carbon intensity pathway", 48, 82, 345, 175, "kgCO2e/m2/a");
+  drawPdfChart(pdf, page, points, "eui", "euiPathway", "Energy intensity pathway", 458, 82, 345, 175, "kWh/m2/a");
+  pdf.text(page, cleanReportText(CRREM_DATA_ATTRIBUTION), 42, 28, 7);
 
   for (const chunk of chunks(points, 18)) {
     const tablePage = pdf.addPage();
-    pdf.text(tablePage, "CRREM Year-by-Year Calculation Appendix", 48, 790, 16, true);
-    let y = 756;
+    pdf.text(tablePage, "CRREM Year-by-Year Calculation Appendix", 42, 548, 16, true);
+    let y = 516;
     addPdfTableHeader(pdf, tablePage, y);
-    y -= 22;
+    y -= 24;
     for (const point of chunk) {
-      const carbonKg = point.carbonIntensity * Number(property.total_floor_area || 0);
-      pdf.text(tablePage, String(point.year), 50, y, 8, true);
-      pdf.wrapText(tablePage, point.year === analysis.baseline.year ? "Selected baseline" : point.projected ? "Projected baseline" : "Actual year", 84, y, 70, 7, 9);
-      pdf.wrapText(tablePage, `${kwh(point.totalEnergy)} / ${kwh(property.total_floor_area)} = ${formatPdfNumber(point.eui)}`, 160, y, 116, 7, 9);
-      pdf.wrapText(tablePage, `${kwh(carbonKg)} / ${kwh(property.total_floor_area)} = ${formatPdfNumber(point.carbonIntensity)}`, 286, y, 128, 7, 9);
-      pdf.wrapText(tablePage, `CO2 ${formatPdfNumber(point.carbonPathway)} | EUI ${formatPdfNumber(point.euiPathway)}`, 424, y, 112, 7, 9);
-      y -= 38;
+      pdf.text(tablePage, String(point.year), 44, y, 8, true);
+      pdf.wrapText(tablePage, point.year === analysis.baseline.year ? "Selected baseline" : point.projected ? "Projected baseline" : "Actual year", 78, y, 88, 7, 9);
+      pdf.wrapText(tablePage, `${kwh(point.totalEnergy)} / ${kwh(property.total_floor_area)} = ${formatPdfNumber(point.eui)}`, 176, y, 132, 7, 9);
+      pdf.wrapText(tablePage, `${kwh(point.grossCarbonKg)} - credit ${kwh(point.exportCreditKg)} = ${kwh(point.netCarbonKg)}; / ${kwh(property.total_floor_area)} = ${formatPdfNumber(point.carbonIntensity)}`, 320, y, 238, 7, 9);
+      pdf.wrapText(tablePage, `CO2 ${formatPdfNumber(point.carbonPathway)} | EUI ${formatPdfNumber(point.euiPathway)}`, 572, y, 196, 7, 9);
+      y -= 28;
     }
   }
 
@@ -699,10 +698,10 @@ function addReviewInstructions(workbook) {
   }
 }
 
-function addPdfMetric(pdf, page, x, y, label, value) {
-  pdf.rect(page, x, y - 42, 130, 50, "F4F8F5", "B7C8BB");
+function addPdfMetric(pdf, page, x, y, label, value, w = 130) {
+  pdf.rect(page, x, y - 42, w, 50, "F4F8F5", "B7C8BB");
   pdf.text(page, label, x + 10, y - 9, 8, true, "5E755E");
-  pdf.wrapText(page, cleanReportText(value), x + 10, y - 25, 110, 13, 15, true);
+  pdf.wrapText(page, cleanReportText(value), x + 10, y - 25, w - 20, 12, 14, true);
 }
 
 function drawPdfChart(pdf, page, points, actualKey, pathwayKey, title, x, y, w, h, unit) {
@@ -715,7 +714,7 @@ function drawPdfChart(pdf, page, points, actualKey, pathwayKey, title, x, y, w, 
   const py = (value) => y + h - (Number(value) / maxValue) * h;
 
   pdf.text(page, title, x, y + h + 24, 11, true);
-  pdf.text(page, unit, x + 360, y + h + 24, 8, false, "5E755E");
+  pdf.text(page, unit, x + w - 106, y + h + 24, 8, false, "5E755E");
   pdf.line(page, x, y, x, y + h, "BACBBE", 0.7);
   pdf.line(page, x, y, x + w, y, "BACBBE", 0.7);
 
@@ -742,12 +741,12 @@ function drawPdfPath(pdf, page, points, x, y, key, color) {
 }
 
 function addPdfTableHeader(pdf, page, y) {
-  pdf.rect(page, 48, y - 14, 500, 20, "EFF6F0", "BACBBE");
-  pdf.text(page, "Year", 50, y - 8, 7, true);
-  pdf.text(page, "Source", 84, y - 8, 7, true);
-  pdf.text(page, "EUI formula", 160, y - 8, 7, true);
-  pdf.text(page, "Carbon formula", 286, y - 8, 7, true);
-  pdf.text(page, "CRREM pathway", 424, y - 8, 7, true);
+  pdf.rect(page, 42, y - 14, 762, 20, "EFF6F0", "BACBBE");
+  pdf.text(page, "Year", 44, y - 8, 7, true);
+  pdf.text(page, "Source", 78, y - 8, 7, true);
+  pdf.text(page, "EUI formula", 176, y - 8, 7, true);
+  pdf.text(page, "Carbon formula", 320, y - 8, 7, true);
+  pdf.text(page, "CRREM pathway", 572, y - 8, 7, true);
 }
 
 function combineCrremPdfSeries(historical, projected, baselineYear) {
@@ -762,9 +761,9 @@ function formatPdfNumber(value) {
 }
 
 class SimplePdf {
-  constructor() {
-    this.width = 595.28;
-    this.height = 841.89;
+  constructor({ orientation = "portrait" } = {}) {
+    this.width = orientation === "landscape" ? 841.89 : 595.28;
+    this.height = orientation === "landscape" ? 595.28 : 841.89;
     this.pages = [];
   }
 

@@ -126,8 +126,10 @@ export function upsertProperty(db, input) {
   if (input.id) {
     db.run(
       `UPDATE properties
-       SET name=?, address=?, total_floor_area=?, crrem_country=?, crrem_property_type=?, elec_cost_eur_per_kwh=?,
-           heating_cost_eur_per_kwh=?, cooling_cost_eur_per_kwh=?, notes=?,
+       SET name=?, address=?, total_floor_area=?, crrem_country=?, crrem_property_type=?,
+           heating_carrier=?, cooling_carrier=?, renewable_consumed_kwh=?, renewable_exported_kwh=?,
+           heating_emission_factor_kgco2e_per_kwh=?, cooling_emission_factor_kgco2e_per_kwh=?,
+           elec_cost_eur_per_kwh=?, heating_cost_eur_per_kwh=?, cooling_cost_eur_per_kwh=?, notes=?,
            updated_at=CURRENT_TIMESTAMP
        WHERE id=?`,
       [
@@ -136,6 +138,12 @@ export function upsertProperty(db, input) {
         nullable(input.total_floor_area),
         input.crrem_country || "",
         input.crrem_property_type || "Office",
+        input.heating_carrier || "district_heating",
+        input.cooling_carrier || "district_cooling",
+        Number(input.renewable_consumed_kwh || 0),
+        Number(input.renewable_exported_kwh || 0),
+        nullable(input.heating_emission_factor_kgco2e_per_kwh),
+        nullable(input.cooling_emission_factor_kgco2e_per_kwh),
         Number(input.elec_cost_eur_per_kwh || 0),
         Number(input.heating_cost_eur_per_kwh || 0),
         Number(input.cooling_cost_eur_per_kwh || 0),
@@ -147,15 +155,23 @@ export function upsertProperty(db, input) {
   }
   db.run(
     `INSERT INTO properties (
-      name, address, total_floor_area, crrem_country, crrem_property_type, elec_cost_eur_per_kwh,
-      heating_cost_eur_per_kwh, cooling_cost_eur_per_kwh, notes, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      name, address, total_floor_area, crrem_country, crrem_property_type,
+      heating_carrier, cooling_carrier, renewable_consumed_kwh, renewable_exported_kwh,
+      heating_emission_factor_kgco2e_per_kwh, cooling_emission_factor_kgco2e_per_kwh,
+      elec_cost_eur_per_kwh, heating_cost_eur_per_kwh, cooling_cost_eur_per_kwh, notes, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     [
       input.name,
       input.address || "",
       nullable(input.total_floor_area),
       input.crrem_country || "",
       input.crrem_property_type || "Office",
+      input.heating_carrier || "district_heating",
+      input.cooling_carrier || "district_cooling",
+      Number(input.renewable_consumed_kwh || 0),
+      Number(input.renewable_exported_kwh || 0),
+      nullable(input.heating_emission_factor_kgco2e_per_kwh),
+      nullable(input.cooling_emission_factor_kgco2e_per_kwh),
       Number(input.elec_cost_eur_per_kwh || 0),
       Number(input.heating_cost_eur_per_kwh || 0),
       Number(input.cooling_cost_eur_per_kwh || 0),

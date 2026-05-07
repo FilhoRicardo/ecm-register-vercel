@@ -12,6 +12,24 @@ const DEFAULT_COUNTRY = "United Kingdom";
 const DEFAULT_PROPERTY_TYPE = "Office";
 const UK_GRID_2020 = getGridEf(DEFAULT_COUNTRY, 2020) || 0.20431;
 const DISTRICT_BASE_EF = 0.20431;
+const GAS_EF = 0.18316;
+const OIL_EF = 0.281;
+const BIOMASS_EF = 0;
+
+export const HEATING_CARRIER_OPTIONS = [
+  { value: "district_heating", label: "District heating" },
+  { value: "natural_gas", label: "Natural gas" },
+  { value: "heating_oil", label: "Heating oil" },
+  { value: "electric", label: "Electric / heat pump" },
+  { value: "biomass", label: "Biomass" },
+  { value: "none", label: "None / not applicable" }
+];
+
+export const COOLING_CARRIER_OPTIONS = [
+  { value: "district_cooling", label: "District cooling" },
+  { value: "electric", label: "Electric chiller / heat pump" },
+  { value: "none", label: "None / not applicable" }
+];
 
 export {
   CRREM_COUNTRIES,
@@ -36,7 +54,11 @@ export function normaliseCrremSettings(property = {}) {
   const inferredCountry = inferCrremCountry(property);
   return {
     country: property.crrem_country || inferredCountry || DEFAULT_COUNTRY,
-    propertyType: property.crrem_property_type || DEFAULT_PROPERTY_TYPE
+    propertyType: property.crrem_property_type || DEFAULT_PROPERTY_TYPE,
+    heatingCarrier: property.heating_carrier || "district_heating",
+    coolingCarrier: property.cooling_carrier || "district_cooling",
+    renewableConsumed: Number(property.renewable_consumed_kwh || 0),
+    renewableExported: Number(property.renewable_exported_kwh || 0)
   };
 }
 
@@ -53,12 +75,13 @@ export function getCrremDataAvailability(monthlyUsage, propertyId) {
   };
 }
 
-export function buildCrremAnalysis({ property, monthlyUsage, mode = "average_full_years", reportingYear, rollingEndMonth }) {
+export function buildCrremAnalysis({ property, monthlyUsage, mode = "first_complete_year", reportingYear, rollingEndMonth }) {
   if (!property) return { ok: false, error: "Select a property." };
   const area = Number(property.total_floor_area || 0);
   if (!area) return { ok: false, error: "Property total floor area is required for CRREM analysis." };
 
-  const { country, propertyType } = normaliseCrremSettings(property);
+  const settings = normaliseCrremSettings(property);
+  const { country, propertyType } = settings;
   const pathway = findPathway(country, propertyType);
   if (!pathway) return { ok: false, error: `No CRREM pathway found for ${country} / ${propertyType}.` };
 
@@ -68,16 +91,16 @@ export function buildCrremAnalysis({ property, monthlyUsage, mode = "average_ful
   const historicalAnnual = annualUsageByYear(monthlyUsage, property.id);
   const historical = Object.entries(historicalAnnual)
     .filter(([, usage]) => usage.months.size === 12)
-    .map(([year, usage]) => calculateYearPoint(Number(year), usage, area, pathway, country, false))
+    .map(([year, usage]) => calculateYearPoint(Number(year), usage, area, pathway, country, property, false))
     .filter(Boolean);
 
   const startYear = Math.max(CRREM_YEARS[0], baseline.year);
   const projected = [];
   for (let year = startYear; year <= 2050; year += 1) {
-    projected.push(calculateYearPoint(year, baseline.usage, area, pathway, country, true));
+    projected.push(calculateYearPoint(year, baseline.usage, area, pathway, country, property, true));
   }
 
-  const baselinePoint = calculateYearPoint(baseline.year, baseline.usage, area, pathway, country, false);
+  const baselinePoint = calculateYearPoint(baseline.year, baseline.usage, area, pathway, country, property, false);
   const projectedWithBaseline = projected.filter((point) => point.year >= baseline.year);
 
   return {
@@ -86,6 +109,7 @@ export function buildCrremAnalysis({ property, monthlyUsage, mode = "average_ful
     country,
     propertyType,
     regionCode: pathway.regionCode,
+    settings,
     mode,
     baseline,
     baselinePoint,
@@ -115,6 +139,12 @@ function selectBaselineUsage(monthlyUsage, propertyId, mode, reportingYear, roll
     return { ok: true, year: Number(endMonth.slice(0, 4)), label: `Rolling 12 months to ${endMonth}`, months, usage: usage.totals };
   }
 
+  if (mode === "first_complete_year") {
+    if (!fullYears.length) return { ok: false, error: "At least one complete calendar year of whole-building monthly usage is required." };
+    const year = fullYears[0];
+    return { ok: true, year, label: `${year} first complete year`, months: [...annual[year].months].sort(), usage: annual[year].totals };
+  }
+
   if (!fullYears.length) return { ok: false, error: "At least one complete calendar year of whole-building monthly usage is required." };
   const total = { electricity_kwh: 0, heating_kwh: 0, cooling_kwh: 0 };
   for (const year of fullYears) addUsage(total, annual[year].totals);
@@ -127,31 +157,48 @@ function selectBaselineUsage(monthlyUsage, propertyId, mode, reportingYear, roll
   };
 }
 
-function calculateYearPoint(year, usage, area, pathway, country, projected) {
+function calculateYearPoint(year, usage, area, pathway, country, property, projected) {
   const index = CRREM_YEARS.indexOf(year);
   if (index < 0) return null;
   const electricity = Number(usage.electricity_kwh || 0);
   const heating = Number(usage.heating_kwh || 0);
   const cooling = Number(usage.cooling_kwh || 0);
-  const totalEnergy = electricity + heating + cooling;
+  const renewableConsumed = Number(property.renewable_consumed_kwh || 0);
+  const renewableExported = Number(property.renewable_exported_kwh || 0);
+  const totalEnergy = electricity + heating + cooling + renewableConsumed;
   const gridEf = getGridEf(country, year);
-  const heatEf = districtEf(country, year);
-  const coolEf = districtEf(country, year);
-  const carbonKg = (electricity * gridEf) + (heating * heatEf) + (cooling * coolEf);
+  const heatEf = carrierEf(property.heating_carrier || "district_heating", country, year, nullableNumber(property.heating_emission_factor_kgco2e_per_kwh));
+  const coolEf = carrierEf(property.cooling_carrier || "district_cooling", country, year, nullableNumber(property.cooling_emission_factor_kgco2e_per_kwh));
+  const electricityCarbon = electricity * gridEf;
+  const heatingCarbon = heating * heatEf;
+  const coolingCarbon = cooling * coolEf;
+  const grossCarbonKg = electricityCarbon + heatingCarbon + coolingCarbon;
+  const exportCreditKg = Math.min(renewableExported * gridEf, electricityCarbon);
+  const carbonKg = Math.max(0, grossCarbonKg - exportCreditKg);
   return {
     year,
     projected,
     electricity,
     heating,
     cooling,
+    renewableConsumed,
+    renewableExported,
     totalEnergy,
     eui: totalEnergy / area,
     carbonIntensity: carbonKg / area,
+    grossCarbonKg,
+    exportCreditKg,
+    netCarbonKg: carbonKg,
+    electricityCarbon,
+    heatingCarbon,
+    coolingCarbon,
     carbonPathway: pathway.co2[index],
     euiPathway: pathway.eui[index],
     gridEf,
     heatEf,
-    coolEf
+    coolEf,
+    heatingCarrier: property.heating_carrier || "district_heating",
+    coolingCarrier: property.cooling_carrier || "district_cooling"
   };
 }
 
@@ -230,6 +277,22 @@ function districtEf(country, year) {
   const grid = getGridEf(country, year);
   if (!grid || !UK_GRID_2020) return DISTRICT_BASE_EF;
   return DISTRICT_BASE_EF * (grid / UK_GRID_2020);
+}
+
+function carrierEf(carrier, country, year, override) {
+  if (override !== null) return override;
+  if (carrier === "natural_gas") return GAS_EF;
+  if (carrier === "heating_oil") return OIL_EF;
+  if (carrier === "electric") return getGridEf(country, year);
+  if (carrier === "biomass") return BIOMASS_EF;
+  if (carrier === "none") return 0;
+  return districtEf(country, year);
+}
+
+function nullableNumber(value) {
+  if (value === "" || value === null || value === undefined) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 function firstCrossing(points, actualKey, pathwayKey) {

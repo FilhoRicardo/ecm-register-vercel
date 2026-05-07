@@ -40,7 +40,9 @@ import {
   CRREM_DATA_ATTRIBUTION,
   CRREM_DATA_VERSION,
   CRREM_PROPERTY_TYPES,
+  COOLING_CARRIER_OPTIONS,
   getCrremDataAvailability,
+  HEATING_CARRIER_OPTIONS,
   inferCrremCountry,
   normaliseCrremSettings
 } from "./lib/crrem.js";
@@ -91,6 +93,12 @@ const EMPTY_PROPERTY = {
   total_floor_area: "",
   crrem_country: "",
   crrem_property_type: "Office",
+  heating_carrier: "district_heating",
+  cooling_carrier: "district_cooling",
+  renewable_consumed_kwh: "",
+  renewable_exported_kwh: "",
+  heating_emission_factor_kgco2e_per_kwh: "",
+  cooling_emission_factor_kgco2e_per_kwh: "",
   elec_cost_eur_per_kwh: "0.12",
   heating_cost_eur_per_kwh: "0.09",
   cooling_cost_eur_per_kwh: "0.12",
@@ -303,7 +311,9 @@ export default function App() {
       ...propertyForm,
       id: propertyForm.id || null,
       crrem_country: propertyForm.crrem_country || inferCrremCountry(propertyForm),
-      crrem_property_type: propertyForm.crrem_property_type || "Office"
+      crrem_property_type: propertyForm.crrem_property_type || "Office",
+      heating_carrier: propertyForm.heating_carrier || "district_heating",
+      cooling_carrier: propertyForm.cooling_carrier || "district_cooling"
     });
     setPropertyForm(EMPTY_PROPERTY);
     setSelectedPropertyId(String(id));
@@ -938,6 +948,26 @@ function PropertiesView({ ready, properties, form, setForm, save, remove }) {
               </Field>
             </div>
             <div className="grid two">
+              <Field label="Heating carrier">
+                <select value={form.heating_carrier || "district_heating"} onChange={(e) => set("heating_carrier", e.target.value)}>
+                  {HEATING_CARRIER_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                </select>
+              </Field>
+              <Field label="Cooling carrier">
+                <select value={form.cooling_carrier || "district_cooling"} onChange={(e) => set("cooling_carrier", e.target.value)}>
+                  {COOLING_CARRIER_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                </select>
+              </Field>
+            </div>
+            <div className="grid two">
+              <Field label="Heating EF override kgCO2e/kWh"><input type="number" step="0.0001" value={form.heating_emission_factor_kgco2e_per_kwh ?? ""} onChange={(e) => set("heating_emission_factor_kgco2e_per_kwh", e.target.value)} /></Field>
+              <Field label="Cooling EF override kgCO2e/kWh"><input type="number" step="0.0001" value={form.cooling_emission_factor_kgco2e_per_kwh ?? ""} onChange={(e) => set("cooling_emission_factor_kgco2e_per_kwh", e.target.value)} /></Field>
+            </div>
+            <div className="grid two">
+              <Field label="On-site renewable consumed kWh/a"><input type="number" step="0.01" value={form.renewable_consumed_kwh ?? ""} onChange={(e) => set("renewable_consumed_kwh", e.target.value)} /></Field>
+              <Field label="On-site renewable exported kWh/a"><input type="number" step="0.01" value={form.renewable_exported_kwh ?? ""} onChange={(e) => set("renewable_exported_kwh", e.target.value)} /></Field>
+            </div>
+            <div className="grid two">
               <Field label="Total floor area m²"><input type="number" step="0.01" value={form.total_floor_area} onChange={(e) => set("total_floor_area", e.target.value)} /></Field>
               <Field label="Electricity cost EUR/kWh"><input type="number" step="0.0001" value={form.elec_cost_eur_per_kwh} onChange={(e) => set("elec_cost_eur_per_kwh", e.target.value)} /></Field>
               <Field label="Heating cost EUR/kWh"><input type="number" step="0.0001" value={form.heating_cost_eur_per_kwh} onChange={(e) => set("heating_cost_eur_per_kwh", e.target.value)} /></Field>
@@ -952,15 +982,16 @@ function PropertiesView({ ready, properties, form, setForm, save, remove }) {
         </div>
         <div className="card" style={{ overflow: "auto", maxHeight: 680 }}>
           <table>
-            <thead><tr><th>Name</th><th>Area</th><th>CRREM</th><th>Costs</th><th></th></tr></thead>
+            <thead><tr><th>Name</th><th>Area</th><th>CRREM</th><th>Carriers</th><th>Costs</th><th></th></tr></thead>
             <tbody>
               {properties.map((property) => (
                 <tr key={property.id}>
-                  <td onClick={() => setForm({ ...property, total_floor_area: property.total_floor_area ?? "", crrem_country: property.crrem_country || inferCrremCountry(property), crrem_property_type: property.crrem_property_type || "Office" })} style={{ cursor: "pointer" }}>
+                  <td onClick={() => setForm(propertyToForm(property))} style={{ cursor: "pointer" }}>
                     <strong>{property.name}</strong><br /><span className="muted">{property.address}</span>
                   </td>
                   <td>{money(property.total_floor_area)} m²</td>
                   <td>{normaliseCrremSettings(property).country} / {normaliseCrremSettings(property).propertyType}</td>
+                  <td>{carrierLabel(HEATING_CARRIER_OPTIONS, property.heating_carrier || "district_heating")} / {carrierLabel(COOLING_CARRIER_OPTIONS, property.cooling_carrier || "district_cooling")}</td>
                   <td>Elec €{money(property.elec_cost_eur_per_kwh)} / Heat €{money(property.heating_cost_eur_per_kwh)} / Cool €{money(property.cooling_cost_eur_per_kwh)}</td>
                   <td><button className="btn danger" type="button" onClick={() => remove(property.id)}>Remove</button></td>
                 </tr>
@@ -1214,7 +1245,7 @@ function MonthlyUsageView({ ready, properties, tenants, usage, form, setForm, sa
 }
 
 function CrremView({ ready, properties, selectedPropertyId, setSelectedPropertyId, monthlyUsage }) {
-  const [mode, setMode] = useState("average_full_years");
+  const [mode, setMode] = useState("first_complete_year");
   const [reportingYear, setReportingYear] = useState("");
   const [rollingEndMonth, setRollingEndMonth] = useState("");
   const selectedId = Number(selectedPropertyId) || properties[0]?.id || "";
@@ -1250,9 +1281,10 @@ function CrremView({ ready, properties, selectedPropertyId, setSelectedPropertyI
           </Field>
           <Field label="Baseline source">
             <select value={mode} onChange={(e) => setMode(e.target.value)}>
-              <option value="average_full_years">Average complete years</option>
+              <option value="first_complete_year">First complete year</option>
               <option value="reporting_year">Reporting year</option>
               <option value="rolling_12">Rolling 12 months</option>
+              <option value="average_full_years">Average complete years</option>
             </select>
           </Field>
           {mode === "reporting_year" ? (
@@ -1261,8 +1293,10 @@ function CrremView({ ready, properties, selectedPropertyId, setSelectedPropertyI
                 {availability.fullYears.map((year) => <option key={year} value={year}>{year}</option>)}
               </select>
             </Field>
+          ) : mode === "first_complete_year" ? (
+            <Field label="First complete year"><input value={availability.fullYears[0] || "No complete year"} disabled /></Field>
           ) : (
-            <Field label="Latest complete year"><input value={availability.fullYears.at(-1) || "No complete year"} disabled /></Field>
+            <Field label="Complete years"><input value={availability.fullYears.join(", ") || "No complete year"} disabled /></Field>
           )}
           {mode === "rolling_12" ? (
             <Field label="Rolling end month"><input type="month" value={rollingEndMonth} onChange={(e) => setRollingEndMonth(e.target.value)} /></Field>
@@ -1316,15 +1350,17 @@ function CrremView({ ready, properties, selectedPropertyId, setSelectedPropertyI
                   <tr><th>Region code</th><td>{analysis.regionCode}</td></tr>
                   <tr><th>Floor area</th><td>{money(property.total_floor_area)} m²</td></tr>
                   <tr><th>Electricity</th><td>{kwh(analysis.baseline.usage.electricity_kwh)} kWh/a</td></tr>
-                  <tr><th>Heating</th><td>{kwh(analysis.baseline.usage.heating_kwh)} kWh/a</td></tr>
-                  <tr><th>Cooling</th><td>{kwh(analysis.baseline.usage.cooling_kwh)} kWh/a</td></tr>
+                  <tr><th>Heating</th><td>{kwh(analysis.baseline.usage.heating_kwh)} kWh/a - {carrierLabel(HEATING_CARRIER_OPTIONS, analysis.settings.heatingCarrier)}</td></tr>
+                  <tr><th>Cooling</th><td>{kwh(analysis.baseline.usage.cooling_kwh)} kWh/a - {carrierLabel(COOLING_CARRIER_OPTIONS, analysis.settings.coolingCarrier)}</td></tr>
+                  <tr><th>Renewable consumed</th><td>{kwh(analysis.settings.renewableConsumed)} kWh/a</td></tr>
+                  <tr><th>Renewable exported</th><td>{kwh(analysis.settings.renewableExported)} kWh/a</td></tr>
                 </tbody>
               </table>
             </div>
             <div className="card">
               <h3>Method</h3>
               <p className="muted">
-                Historical points use complete calendar years from whole-building monthly usage. Future points hold annual energy demand flat from the selected baseline through 2050 and apply the CRREM grid decarbonisation factors.
+                Historical points use complete calendar years from whole-building monthly usage. Future points hold annual energy demand flat from the selected baseline through 2050 and apply the CRREM grid decarbonisation factors. On-site renewables consumed count in EUI with zero carbon; exported renewables create a capped grid export credit.
               </p>
               <p className="muted">CRREM data: {CRREM_DATA_VERSION}. {CRREM_DATA_ATTRIBUTION}</p>
             </div>
@@ -1592,9 +1628,8 @@ function CrremCalculationTable({ analysis, points }) {
           </thead>
           <tbody>
             {points.map((point) => {
-              const energyFormula = `(${kwh(point.electricity)} + ${kwh(point.heating)} + ${kwh(point.cooling)}) / ${kwh(area)} = ${formatCrremNumber(point.eui)} kWh/m²/a`;
-              const carbonKg = (Number(point.carbonIntensity || 0) * area);
-              const carbonFormula = `(${kwh(point.electricity)} x ${formatCrremFactor(point.gridEf)}) + (${kwh(point.heating)} x ${formatCrremFactor(point.heatEf)}) + (${kwh(point.cooling)} x ${formatCrremFactor(point.coolEf)}) = ${kwh(carbonKg)} kgCO2e; ${kwh(carbonKg)} / ${kwh(area)} = ${formatCrremNumber(point.carbonIntensity)} kgCO2e/m²/a`;
+              const energyFormula = `(${kwh(point.electricity)} + ${kwh(point.heating)} + ${kwh(point.cooling)} + renewable consumed ${kwh(point.renewableConsumed)}) / ${kwh(area)} = ${formatCrremNumber(point.eui)} kWh/m²/a`;
+              const carbonFormula = `Gross: (${kwh(point.electricity)} x ${formatCrremFactor(point.gridEf)}) + (${kwh(point.heating)} x ${formatCrremFactor(point.heatEf)}) + (${kwh(point.cooling)} x ${formatCrremFactor(point.coolEf)}) = ${kwh(point.grossCarbonKg)} kgCO2e; export credit ${kwh(point.exportCreditKg)}; net ${kwh(point.netCarbonKg)} / ${kwh(area)} = ${formatCrremNumber(point.carbonIntensity)} kgCO2e/m²/a`;
               return (
                 <tr key={point.year}>
                   <td>{point.year}</td>
@@ -1639,6 +1674,25 @@ function formatCrremFactor(value) {
 
 function Field({ label, children, className = "" }) {
   return <div className={`field ${className}`.trim()}><label>{label}</label>{children}</div>;
+}
+
+function propertyToForm(property) {
+  return {
+    ...property,
+    total_floor_area: property.total_floor_area ?? "",
+    crrem_country: property.crrem_country || inferCrremCountry(property),
+    crrem_property_type: property.crrem_property_type || "Office",
+    heating_carrier: property.heating_carrier || "district_heating",
+    cooling_carrier: property.cooling_carrier || "district_cooling",
+    renewable_consumed_kwh: property.renewable_consumed_kwh ?? "",
+    renewable_exported_kwh: property.renewable_exported_kwh ?? "",
+    heating_emission_factor_kgco2e_per_kwh: property.heating_emission_factor_kgco2e_per_kwh ?? "",
+    cooling_emission_factor_kgco2e_per_kwh: property.cooling_emission_factor_kgco2e_per_kwh ?? ""
+  };
+}
+
+function carrierLabel(options, value) {
+  return options.find((item) => item.value === value)?.label || value || "not set";
 }
 
 function EmptyState() {

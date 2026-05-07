@@ -1608,47 +1608,83 @@ function CrremChart({ title, unit, points, actualKey, pathwayKey, baselineYear }
 }
 
 function CrremCalculationTable({ analysis, points }) {
-  const area = Number(analysis.property.total_floor_area || 0);
+  const rows = buildCrremCalculationRows(analysis, points);
   return (
     <div className="card crrem-calculation-card" style={{ marginTop: 14 }}>
       <h3>Calculation Method</h3>
       <p className="muted">
-        This table is the audit trail for the CRREM numbers. Historical rows use complete calendar-year building usage. Projected rows reuse the selected baseline kWh and apply the CRREM emission factor for that year.
+        This matrix is the audit trail for the CRREM numbers. Years run across the top; each row shows the input, carrier factor, total, asset result, or CRREM pathway value used for that year.
       </p>
       <div className="calculation-table-wrap">
         <table className="calculation-table">
           <thead>
             <tr>
-              <th>Year</th>
-              <th>Source</th>
-              <th>EUI calculation</th>
-              <th>Carbon calculation</th>
-              <th>Pathway comparison</th>
+              <th>Calculation item</th>
+              {points.map((point) => <th key={point.year}>{point.year}</th>)}
             </tr>
           </thead>
           <tbody>
-            {points.map((point) => {
-              const energyFormula = `(${kwh(point.electricity)} + ${kwh(point.heating)} + ${kwh(point.cooling)} + renewable consumed ${kwh(point.renewableConsumed)}) / ${kwh(area)} = ${formatCrremNumber(point.eui)} kWh/m²/a`;
-              const carbonFormula = `Gross: (${kwh(point.electricity)} x ${formatCrremFactor(point.gridEf)}) + (${kwh(point.heating)} x ${formatCrremFactor(point.heatEf)}) + (${kwh(point.cooling)} x ${formatCrremFactor(point.coolEf)}) = ${kwh(point.grossCarbonKg)} kgCO2e; export credit ${kwh(point.exportCreditKg)}; net ${kwh(point.netCarbonKg)} / ${kwh(area)} = ${formatCrremNumber(point.carbonIntensity)} kgCO2e/m²/a`;
-              return (
-                <tr key={point.year}>
-                  <td>{point.year}</td>
-                  <td>{point.year === analysis.baseline.year ? "Selected baseline" : point.projected ? "Projected from baseline" : "Actual complete year"}</td>
-                  <td>{energyFormula}</td>
-                  <td>{carbonFormula}</td>
-                  <td>
-                    CO2: {formatCrremNumber(point.carbonIntensity)} vs {formatCrremNumber(point.carbonPathway)} kgCO2e/m²/a.
-                    <br />
-                    EUI: {formatCrremNumber(point.eui)} vs {formatCrremNumber(point.euiPathway)} kWh/m²/a.
-                  </td>
-                </tr>
-              );
-            })}
+            {rows.map((row) => (
+              <tr key={row.id} className={row.emphasis ? "calculation-total-row" : ""}>
+                <td>{row.label}</td>
+                {points.map((point) => <td key={`${row.id}-${point.year}`}>{row.value(point)}</td>)}
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
     </div>
   );
+}
+
+function buildCrremCalculationRows(analysis, points) {
+  const area = Number(analysis.property.total_floor_area || 0);
+  const hasHeating = points.some((point) => Number(point.heating || 0) !== 0) || analysis.settings.heatingCarrier !== "none";
+  const hasCooling = points.some((point) => Number(point.cooling || 0) !== 0) || analysis.settings.coolingCarrier !== "none";
+  const hasRenewables = points.some((point) => Number(point.renewableConsumed || 0) !== 0 || Number(point.renewableExported || 0) !== 0);
+  const rows = [
+    { id: "source", label: "Source", value: (point) => crremPointSource(point, analysis.baseline.year) },
+    { id: "area", label: "Gross floor area (m²)", value: () => money(area) },
+    { id: "electricity", label: "Electricity (kWh/a)", value: (point) => kwh(point.electricity) },
+    { id: "electricity-ef", label: "Electricity emission factor (kgCO2e/kWh)", value: (point) => formatCrremFactor(point.gridEf) }
+  ];
+  if (hasHeating) {
+    rows.push(
+      { id: "heating-carrier", label: "Heating carrier", value: (point) => carrierLabel(HEATING_CARRIER_OPTIONS, point.heatingCarrier) },
+      { id: "heating", label: "Heating (kWh/a)", value: (point) => kwh(point.heating) },
+      { id: "heating-ef", label: "Heating emission factor (kgCO2e/kWh)", value: (point) => formatCrremFactor(point.heatEf) }
+    );
+  }
+  if (hasCooling) {
+    rows.push(
+      { id: "cooling-carrier", label: "Cooling carrier", value: (point) => carrierLabel(COOLING_CARRIER_OPTIONS, point.coolingCarrier) },
+      { id: "cooling", label: "Cooling (kWh/a)", value: (point) => kwh(point.cooling) },
+      { id: "cooling-ef", label: "Cooling emission factor (kgCO2e/kWh)", value: (point) => formatCrremFactor(point.coolEf) }
+    );
+  }
+  if (hasRenewables) {
+    rows.push(
+      { id: "renewable-consumed", label: "On-site renewable consumed (kWh/a)", value: (point) => kwh(point.renewableConsumed) },
+      { id: "renewable-exported", label: "On-site renewable exported (kWh/a)", value: (point) => kwh(point.renewableExported) },
+      { id: "renewable-credit", label: "Export credit (kgCO2e/a)", value: (point) => kwh(point.exportCreditKg) }
+    );
+  }
+  rows.push(
+    { id: "total-energy", label: "Total energy (kWh/a)", value: (point) => kwh(point.totalEnergy), emphasis: true },
+    { id: "asset-eui", label: "Asset EUI (kWh/m²/a)", value: (point) => formatCrremNumber(point.eui), emphasis: true },
+    { id: "crrem-eui", label: "CRREM line for EUI (kWh/m²/a)", value: (point) => formatCrremNumber(point.euiPathway), emphasis: true },
+    { id: "gross-carbon", label: "Gross carbon (kgCO2e/a)", value: (point) => kwh(point.grossCarbonKg) },
+    { id: "net-carbon", label: "Net carbon (kgCO2e/a)", value: (point) => kwh(point.netCarbonKg), emphasis: true },
+    { id: "asset-carbon", label: "Asset carbon intensity (kgCO2e/m²/a)", value: (point) => formatCrremNumber(point.carbonIntensity), emphasis: true },
+    { id: "crrem-carbon", label: "CRREM line for carbon (kgCO2e/m²/a)", value: (point) => formatCrremNumber(point.carbonPathway), emphasis: true }
+  );
+  return rows;
+}
+
+function crremPointSource(point, baselineYear) {
+  if (point.year === baselineYear) return "Selected baseline";
+  if (point.projected) return "Projected from baseline";
+  return "Actual complete year";
 }
 
 function chartPath(points, x, y, key) {

@@ -5,7 +5,13 @@ import reportTemplatePageUrl from "../assets/report-template-page.jpeg";
 import savillsLogoUrl from "../assets/savills-logo.svg";
 import { downloadBlob } from "./storage.js";
 import { kwh, money, slug } from "./format.js";
-import { buildCrremAnalysis, CRREM_DATA_ATTRIBUTION, CRREM_DATA_VERSION } from "./crrem.js";
+import {
+  buildCrremAnalysis,
+  COOLING_CARRIER_OPTIONS,
+  CRREM_DATA_ATTRIBUTION,
+  CRREM_DATA_VERSION,
+  HEATING_CARRIER_OPTIONS
+} from "./crrem.js";
 import { getEcms, getEquipment, getImplementedSavings, getMonthlyUsage, getProperties, getTenants } from "./sqlite.js";
 
 export const ECM_REVIEW_HEADERS = [
@@ -271,20 +277,20 @@ export async function downloadCrremPdfReport(db, property) {
   drawPdfChart(pdf, page, points, "eui", "euiPathway", "Energy intensity pathway", 458, 82, 345, 175, "kWh/m2/a");
   pdf.text(page, cleanReportText(CRREM_DATA_ATTRIBUTION), 42, 28, 7);
 
-  for (const chunk of chunks(points, 18)) {
+  const calculationRows = buildCrremPdfCalculationRows(analysis, points);
+  for (const chunk of chunks(points, 6)) {
     const tablePage = pdf.addPage();
-    pdf.text(tablePage, "CRREM Year-by-Year Calculation Appendix", 42, 548, 16, true);
-    let y = 516;
-    addPdfTableHeader(pdf, tablePage, y);
-    y -= 24;
-    for (const point of chunk) {
-      pdf.text(tablePage, String(point.year), 44, y, 8, true);
-      pdf.wrapText(tablePage, point.year === analysis.baseline.year ? "Selected baseline" : point.projected ? "Projected baseline" : "Actual year", 78, y, 88, 7, 9);
-      pdf.wrapText(tablePage, `${kwh(point.totalEnergy)} / ${kwh(property.total_floor_area)} = ${formatPdfNumber(point.eui)}`, 176, y, 132, 7, 9);
-      pdf.wrapText(tablePage, `${kwh(point.grossCarbonKg)} - credit ${kwh(point.exportCreditKg)} = ${kwh(point.netCarbonKg)}; / ${kwh(property.total_floor_area)} = ${formatPdfNumber(point.carbonIntensity)}`, 320, y, 238, 7, 9);
-      pdf.wrapText(tablePage, `CO2 ${formatPdfNumber(point.carbonPathway)} | EUI ${formatPdfNumber(point.euiPathway)}`, 572, y, 196, 7, 9);
-      y -= 28;
-    }
+    pdf.text(tablePage, "CRREM Calculation Matrix", 42, 548, 16, true);
+    pdf.wrapText(
+      tablePage,
+      "Years run across the top. Each row shows the usage input, carrier emission factor, total energy, asset intensity, or CRREM pathway value used in the calculation.",
+      42,
+      526,
+      762,
+      8,
+      10
+    );
+    addPdfMatrixTable(pdf, tablePage, chunk, calculationRows, 42, 492);
   }
 
   downloadBlob(pdf.toBlob(), `${slug(property.name)}_CRREM_Report.pdf`);
@@ -740,13 +746,86 @@ function drawPdfPath(pdf, page, points, x, y, key, color) {
   }
 }
 
-function addPdfTableHeader(pdf, page, y) {
-  pdf.rect(page, 42, y - 14, 762, 20, "EFF6F0", "BACBBE");
-  pdf.text(page, "Year", 44, y - 8, 7, true);
-  pdf.text(page, "Source", 78, y - 8, 7, true);
-  pdf.text(page, "EUI formula", 176, y - 8, 7, true);
-  pdf.text(page, "Carbon formula", 320, y - 8, 7, true);
-  pdf.text(page, "CRREM pathway", 572, y - 8, 7, true);
+function buildCrremPdfCalculationRows(analysis, points) {
+  const area = Number(analysis.property.total_floor_area || 0);
+  const hasHeating = points.some((point) => Number(point.heating || 0) !== 0) || analysis.settings.heatingCarrier !== "none";
+  const hasCooling = points.some((point) => Number(point.cooling || 0) !== 0) || analysis.settings.coolingCarrier !== "none";
+  const hasRenewables = points.some((point) => Number(point.renewableConsumed || 0) !== 0 || Number(point.renewableExported || 0) !== 0);
+  const rows = [
+    { id: "source", label: "Source", value: (point) => crremPdfPointSource(point, analysis.baseline.year) },
+    { id: "area", label: "Gross floor area (m2)", value: () => money(area) },
+    { id: "electricity", label: "Electricity (kWh/a)", value: (point) => kwh(point.electricity) },
+    { id: "electricity-ef", label: "Electricity emission factor (kgCO2e/kWh)", value: (point) => formatPdfFactor(point.gridEf) }
+  ];
+  if (hasHeating) {
+    rows.push(
+      { id: "heating-carrier", label: "Heating carrier", value: (point) => optionLabel(HEATING_CARRIER_OPTIONS, point.heatingCarrier) },
+      { id: "heating", label: "Heating (kWh/a)", value: (point) => kwh(point.heating) },
+      { id: "heating-ef", label: "Heating emission factor (kgCO2e/kWh)", value: (point) => formatPdfFactor(point.heatEf) }
+    );
+  }
+  if (hasCooling) {
+    rows.push(
+      { id: "cooling-carrier", label: "Cooling carrier", value: (point) => optionLabel(COOLING_CARRIER_OPTIONS, point.coolingCarrier) },
+      { id: "cooling", label: "Cooling (kWh/a)", value: (point) => kwh(point.cooling) },
+      { id: "cooling-ef", label: "Cooling emission factor (kgCO2e/kWh)", value: (point) => formatPdfFactor(point.coolEf) }
+    );
+  }
+  if (hasRenewables) {
+    rows.push(
+      { id: "renewable-consumed", label: "On-site renewable consumed (kWh/a)", value: (point) => kwh(point.renewableConsumed) },
+      { id: "renewable-exported", label: "On-site renewable exported (kWh/a)", value: (point) => kwh(point.renewableExported) },
+      { id: "renewable-credit", label: "Export credit (kgCO2e/a)", value: (point) => kwh(point.exportCreditKg) }
+    );
+  }
+  rows.push(
+    { id: "total-energy", label: "Total energy (kWh/a)", value: (point) => kwh(point.totalEnergy), emphasis: true },
+    { id: "asset-eui", label: "Asset EUI (kWh/m2/a)", value: (point) => formatPdfNumber(point.eui), emphasis: true },
+    { id: "crrem-eui", label: "CRREM line for EUI (kWh/m2/a)", value: (point) => formatPdfNumber(point.euiPathway), emphasis: true },
+    { id: "gross-carbon", label: "Gross carbon (kgCO2e/a)", value: (point) => kwh(point.grossCarbonKg) },
+    { id: "net-carbon", label: "Net carbon (kgCO2e/a)", value: (point) => kwh(point.netCarbonKg), emphasis: true },
+    { id: "asset-carbon", label: "Asset carbon intensity (kgCO2e/m2/a)", value: (point) => formatPdfNumber(point.carbonIntensity), emphasis: true },
+    { id: "crrem-carbon", label: "CRREM line for carbon (kgCO2e/m2/a)", value: (point) => formatPdfNumber(point.carbonPathway), emphasis: true }
+  );
+  return rows;
+}
+
+function addPdfMatrixTable(pdf, page, points, rows, x, y) {
+  const tableW = 762;
+  const labelW = 205;
+  const colW = (tableW - labelW) / Math.max(1, points.length);
+  const rowH = 18;
+  let top = y;
+  pdf.rect(page, x, top - rowH, tableW, rowH, "EFF6F0", "BACBBE");
+  pdf.text(page, "Calculation item", x + 6, top - 11, 6.6, true);
+  points.forEach((point, index) => {
+    pdf.text(page, String(point.year), x + labelW + index * colW + 6, top - 11, 6.6, true);
+  });
+  top -= rowH;
+  rows.forEach((row, rowIndex) => {
+    const fill = row.emphasis ? "F4F8F5" : rowIndex % 2 ? "FFFFFF" : "FAFCFA";
+    pdf.rect(page, x, top - rowH, tableW, rowH, fill, "D8E2DA");
+    pdf.wrapText(page, row.label, x + 6, top - 7, labelW - 12, 6.0, 7, Boolean(row.emphasis));
+    points.forEach((point, index) => {
+      pdf.wrapText(page, row.value(point), x + labelW + index * colW + 6, top - 7, colW - 10, 6.0, 7, Boolean(row.emphasis));
+    });
+    top -= rowH;
+  });
+  const bottom = top;
+  for (let index = 0; index <= points.length; index += 1) {
+    const xx = x + labelW + index * colW;
+    pdf.line(page, xx, y, xx, bottom, "D8E2DA", 0.3);
+  }
+}
+
+function crremPdfPointSource(point, baselineYear) {
+  if (point.year === baselineYear) return "Selected baseline";
+  if (point.projected) return "Projected from baseline";
+  return "Actual complete year";
+}
+
+function optionLabel(options, value) {
+  return options.find((item) => item.value === value)?.label || value || "not set";
 }
 
 function combineCrremPdfSeries(historical, projected, baselineYear) {
@@ -758,6 +837,12 @@ function formatPdfNumber(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "";
   return n.toLocaleString(undefined, { maximumFractionDigits: 1, minimumFractionDigits: 0 });
+}
+
+function formatPdfFactor(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "";
+  return n.toFixed(4);
 }
 
 class SimplePdf {

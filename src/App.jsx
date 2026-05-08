@@ -421,9 +421,27 @@ export default function App() {
 
   async function createDatabaseBackup() {
     const filename = `ecm_register_backup_${new Date().toISOString().replace(/[:.]/g, "-")}.db`;
-    const handle = await handles.database.getFileHandle(filename, { create: true });
-    await saveDatabase(db, handle);
-    notify(`Backup created: ${filename}`);
+    try {
+      if (!db) throw new Error("Load a database before creating a backup.");
+      const bytes = db.export();
+      if (!handles.database) {
+        downloadBlob(new Blob([bytes], { type: "application/octet-stream" }), filename);
+        notify(`Database folder is not configured. Backup downloaded instead: ${filename}`);
+        return;
+      }
+      const databaseGranted = await ensurePermission(handles.database, "readwrite");
+      setFolderStatuses((prev) => ({ ...prev, database: databaseGranted ? "granted" : "denied" }));
+      if (!databaseGranted) {
+        downloadBlob(new Blob([bytes], { type: "application/octet-stream" }), filename);
+        notify(`Database folder permission was not granted. Backup downloaded instead: ${filename}`);
+        return;
+      }
+      const handle = await handles.database.getFileHandle(filename, { create: true });
+      await saveDatabase(db, handle);
+      notify(`Backup created in Database Folder: ${filename}`);
+    } catch (error) {
+      notify(error.message || String(error));
+    }
   }
 
   function downloadDatabaseFile() {

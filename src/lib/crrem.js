@@ -2,24 +2,26 @@ import {
   CRREM_COUNTRIES,
   CRREM_DATA_ATTRIBUTION,
   CRREM_DATA_VERSION,
-  CRREM_GRID_EF,
   CRREM_PATHWAYS,
   CRREM_PROPERTY_TYPES,
   CRREM_YEARS
 } from "../data/crremV205.js";
+import {
+  CRREM_EMISSION_FACTORS_SOURCE,
+  CRREM_EMISSION_FACTORS_VERSION,
+  CRREM_FIXED_EF_OFFICIAL,
+  CRREM_GRID_EF_OFFICIAL
+} from "../data/crremEmissionFactorsV205.js";
 
 const DEFAULT_COUNTRY = "United Kingdom";
 const DEFAULT_PROPERTY_TYPE = "Office";
-const UK_GRID_2020 = getGridEf(DEFAULT_COUNTRY, 2020) || 0.20431;
-const DISTRICT_BASE_EF = 0.20431;
-const GAS_EF = 0.18316;
-const OIL_EF = 0.281;
-const BIOMASS_EF = 0;
 
 export const HEATING_CARRIER_OPTIONS = [
   { value: "district_heating", label: "District heating" },
   { value: "natural_gas", label: "Natural gas" },
   { value: "heating_oil", label: "Heating oil" },
+  { value: "lpg", label: "LPG" },
+  { value: "coal", label: "Coal" },
   { value: "electric", label: "Electric / heat pump" },
   { value: "biomass", label: "Biomass" },
   { value: "none", label: "None / not applicable" }
@@ -35,6 +37,8 @@ export {
   CRREM_COUNTRIES,
   CRREM_DATA_ATTRIBUTION,
   CRREM_DATA_VERSION,
+  CRREM_EMISSION_FACTORS_SOURCE,
+  CRREM_EMISSION_FACTORS_VERSION,
   CRREM_PROPERTY_TYPES,
   CRREM_YEARS
 };
@@ -55,8 +59,8 @@ export function normaliseCrremSettings(property = {}) {
   return {
     country: property.crrem_country || inferredCountry || DEFAULT_COUNTRY,
     propertyType: property.crrem_property_type || DEFAULT_PROPERTY_TYPE,
-    heatingCarrier: property.heating_carrier || "district_heating",
-    coolingCarrier: property.cooling_carrier || "district_cooling",
+    heatingCarrier: property.heating_carrier || "natural_gas",
+    coolingCarrier: property.cooling_carrier || "electric",
     renewableConsumed: Number(property.renewable_consumed_kwh || 0),
     renewableExported: Number(property.renewable_exported_kwh || 0)
   };
@@ -94,6 +98,12 @@ export function buildCrremAnalysis({ property, monthlyUsage, mode = "first_compl
     .map(Number)
     .filter((year) => historicalAnnual[year].months.size === 12)
     .sort((a, b) => a - b);
+  const factorError = requiredCarrierFactorError(property, baseline.usage, baseline.label)
+    || completeYears
+      .map((year) => requiredCarrierFactorError(property, historicalAnnual[year].totals, `${year} complete actual year`))
+      .find(Boolean);
+  if (factorError) return { ok: false, error: factorError };
+
   const historical = completeYears
     .map((year) => [year, historicalAnnual[year]])
     .map(([year, usage]) => calculateYearPoint(Number(year), usage.totals, area, pathway, country, property, false))
@@ -178,8 +188,8 @@ function calculateYearPoint(year, usage, area, pathway, country, property, proje
   const renewableExported = Number(property.renewable_exported_kwh || 0);
   const totalEnergy = electricity + heating + cooling + renewableConsumed;
   const gridEf = getGridEf(country, year);
-  const heatEf = carrierEf(property.heating_carrier || "district_heating", country, year, nullableNumber(property.heating_emission_factor_kgco2e_per_kwh));
-  const coolEf = carrierEf(property.cooling_carrier || "district_cooling", country, year, nullableNumber(property.cooling_emission_factor_kgco2e_per_kwh));
+  const heatEf = carrierEf(property.heating_carrier || "natural_gas", country, year, nullableNumber(property.heating_emission_factor_kgco2e_per_kwh));
+  const coolEf = carrierEf(property.cooling_carrier || "electric", country, year, nullableNumber(property.cooling_emission_factor_kgco2e_per_kwh));
   const electricityCarbon = electricity * gridEf;
   const heatingCarbon = heating * heatEf;
   const coolingCarbon = cooling * coolEf;
@@ -208,8 +218,8 @@ function calculateYearPoint(year, usage, area, pathway, country, property, proje
     gridEf,
     heatEf,
     coolEf,
-    heatingCarrier: property.heating_carrier || "district_heating",
-    coolingCarrier: property.cooling_carrier || "district_cooling"
+    heatingCarrier: property.heating_carrier || "natural_gas",
+    coolingCarrier: property.cooling_carrier || "electric"
   };
 }
 
@@ -284,25 +294,38 @@ function findPathway(country, propertyType) {
 }
 
 function getGridEf(country, year) {
-  const values = CRREM_GRID_EF[country];
-  if (Array.isArray(values)) return Number(values[CRREM_YEARS.indexOf(year)] || 0);
+  const values = CRREM_GRID_EF_OFFICIAL[country];
   return Number(values?.[String(year)] || values?.[year] || 0);
-}
-
-function districtEf(country, year) {
-  const grid = getGridEf(country, year);
-  if (!grid || !UK_GRID_2020) return DISTRICT_BASE_EF;
-  return DISTRICT_BASE_EF * (grid / UK_GRID_2020);
 }
 
 function carrierEf(carrier, country, year, override) {
   if (override !== null) return override;
-  if (carrier === "natural_gas") return GAS_EF;
-  if (carrier === "heating_oil") return OIL_EF;
+  if (carrier === "natural_gas") return officialFixedEf("natural_gas");
+  if (carrier === "heating_oil") return officialFixedEf("oil_heating_oil");
+  if (carrier === "lpg") return officialFixedEf("lpg");
+  if (carrier === "coal") return officialFixedEf("coal");
   if (carrier === "electric") return getGridEf(country, year);
-  if (carrier === "biomass") return BIOMASS_EF;
+  if (carrier === "biomass") return officialFixedEf("biomass");
   if (carrier === "none") return 0;
-  return districtEf(country, year);
+  return null;
+}
+
+function officialFixedEf(key) {
+  return Number(CRREM_FIXED_EF_OFFICIAL[key]?.factor ?? 0);
+}
+
+function requiredCarrierFactorError(property, usage, label) {
+  const heating = Number(usage.heating_kwh || 0);
+  const cooling = Number(usage.cooling_kwh || 0);
+  const heatingCarrier = property.heating_carrier || "natural_gas";
+  const coolingCarrier = property.cooling_carrier || "electric";
+  if (heating > 0 && heatingCarrier === "district_heating" && nullableNumber(property.heating_emission_factor_kgco2e_per_kwh) === null) {
+    return `CRREM emission factors v2.05 marks District Heating as location-specific. Enter a heating emissions factor override from the district operator before calculating ${label}.`;
+  }
+  if (cooling > 0 && coolingCarrier === "district_cooling" && nullableNumber(property.cooling_emission_factor_kgco2e_per_kwh) === null) {
+    return `CRREM emission factors v2.05 marks District Cooling as location-specific. Enter a cooling emissions factor override from the district operator before calculating ${label}.`;
+  }
+  return "";
 }
 
 function nullableNumber(value) {

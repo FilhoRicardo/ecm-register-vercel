@@ -10,6 +10,7 @@ import {
   COOLING_CARRIER_OPTIONS,
   CRREM_DATA_ATTRIBUTION,
   CRREM_DATA_VERSION,
+  CRREM_EMISSION_FACTORS_SOURCE,
   HEATING_CARRIER_OPTIONS
 } from "./crrem.js";
 import { getEcms, getEquipment, getImplementedSavings, getMonthlyUsage, getProperties, getTenants } from "./sqlite.js";
@@ -270,12 +271,12 @@ export async function downloadCrremPdfReport(db, property) {
   pdf.text(page, "High level method", 42, 360, 13, true);
   pdf.wrapText(page, [
     `This report uses CRREM monthly utility data. The app prefers whole-building records and only aggregates tenant rows when no whole-building records exist. The default baseline is the first complete calendar year available. Complete actual calendar years are plotted wherever available. Future points start after ${analysis.projectionBase?.label || analysis.baseline.label} and hold annual electricity, heating, cooling and on-site renewable consumption flat from that year, then apply CRREM annual emission factors through 2050.`,
-    "EUI is total annual energy, including on-site renewable energy consumed, divided by gross internal area. Carbon intensity is net annual carbon emissions divided by gross internal area. Exported renewable electricity creates a grid export credit capped at grid electricity emissions."
+    "EUI is total annual energy, including on-site renewable energy consumed, divided by gross internal area. Carbon intensity is net annual carbon emissions divided by gross internal area. Electricity and fixed non-electric carrier factors use CRREM Emission Factors v2.05. District heating and cooling require a user-supplied operator factor. Exported renewable electricity creates a grid export credit capped at grid electricity emissions."
   ].join(" "), 42, 342, 756, 8.5, 11);
 
   drawPdfChart(pdf, page, points, "carbonIntensity", "carbonPathway", "Carbon intensity pathway", 48, 82, 345, 175, "kgCO2e/m2/a");
   drawPdfChart(pdf, page, points, "eui", "euiPathway", "Energy intensity pathway", 458, 82, 345, 175, "kWh/m2/a");
-  pdf.text(page, cleanReportText(CRREM_DATA_ATTRIBUTION), 42, 28, 7);
+  pdf.text(page, cleanReportText(`${CRREM_DATA_ATTRIBUTION}; ${CRREM_EMISSION_FACTORS_SOURCE}`), 42, 28, 7);
 
   const calculationRows = buildCrremPdfCalculationRows(analysis, points);
   for (const chunk of chunks(points, 6)) {
@@ -840,6 +841,7 @@ function formatPdfNumber(value) {
 }
 
 function formatPdfFactor(value) {
+  if (value === null || value === undefined || value === "") return "requires override";
   const n = Number(value);
   if (!Number.isFinite(n)) return "";
   return n.toFixed(4);

@@ -52,6 +52,7 @@ assert(buildingAnalysis.projected[0].year === 2026, "First projected year should
 assert(buildingAnalysis.historical.map((point) => point.year).join(",") === "2024,2025", "Historical points should include 2024 and 2025");
 assert(buildingAnalysis.historical[1].eui < buildingAnalysis.historical[0].eui, "2025 EUI should reflect lower actual usage than 2024");
 assert(buildingAnalysis.usageSource === "Whole-building usage records", "Building rows should be preferred when available");
+assert(buildingAnalysis.historical[0].heatEf === 0.202, "Natural gas factor should come from CRREM Emission Factors v2.05");
 
 const tenantAnalysis = buildCrremAnalysis({
   property: property(),
@@ -61,5 +62,30 @@ const tenantAnalysis = buildCrremAnalysis({
 assert(tenantAnalysis.ok, tenantAnalysis.error || "Tenant fallback analysis failed");
 assert(tenantAnalysis.usageSource === "Tenant usage rows aggregated", "Tenant rows should be aggregated when no building rows exist");
 assert(tenantAnalysis.baseline.usage.electricity_kwh === 24000, "Tenant electricity rows should aggregate by month and year");
+
+const districtWithoutOverride = buildCrremAnalysis({
+  property: property({ heating_carrier: "district_heating", cooling_carrier: "district_cooling" }),
+  monthlyUsage: monthlyRows()
+});
+
+assert(!districtWithoutOverride.ok, "District heating/cooling should require an operator emissions factor override when usage is present");
+assert(
+  /District Heating|District Cooling/.test(districtWithoutOverride.error),
+  "District override error should identify the missing district factor"
+);
+
+const districtWithOverride = buildCrremAnalysis({
+  property: property({
+    heating_carrier: "district_heating",
+    cooling_carrier: "district_cooling",
+    heating_emission_factor_kgco2e_per_kwh: 0.12,
+    cooling_emission_factor_kgco2e_per_kwh: 0.08
+  }),
+  monthlyUsage: monthlyRows()
+});
+
+assert(districtWithOverride.ok, districtWithOverride.error || "District override analysis failed");
+assert(districtWithOverride.historical[0].heatEf === 0.12, "District heating override should be used exactly");
+assert(districtWithOverride.historical[0].coolEf === 0.08, "District cooling override should be used exactly");
 
 console.log("CRREM smoke test passed");

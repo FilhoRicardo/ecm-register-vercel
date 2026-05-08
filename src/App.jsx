@@ -39,6 +39,7 @@ import {
   CRREM_COUNTRIES,
   CRREM_DATA_ATTRIBUTION,
   CRREM_DATA_VERSION,
+  CRREM_EMISSION_FACTORS_SOURCE,
   CRREM_PROPERTY_TYPES,
   COOLING_CARRIER_OPTIONS,
   getCrremDataAvailability,
@@ -93,8 +94,8 @@ const EMPTY_PROPERTY = {
   total_floor_area: "",
   crrem_country: "",
   crrem_property_type: "Office",
-  heating_carrier: "district_heating",
-  cooling_carrier: "district_cooling",
+  heating_carrier: "natural_gas",
+  cooling_carrier: "electric",
   renewable_consumed_kwh: "",
   renewable_exported_kwh: "",
   heating_emission_factor_kgco2e_per_kwh: "",
@@ -312,8 +313,8 @@ export default function App() {
       id: propertyForm.id || null,
       crrem_country: propertyForm.crrem_country || inferCrremCountry(propertyForm),
       crrem_property_type: propertyForm.crrem_property_type || "Office",
-      heating_carrier: propertyForm.heating_carrier || "district_heating",
-      cooling_carrier: propertyForm.cooling_carrier || "district_cooling"
+      heating_carrier: propertyForm.heating_carrier || "natural_gas",
+      cooling_carrier: propertyForm.cooling_carrier || "electric"
     });
     setPropertyForm(EMPTY_PROPERTY);
     setSelectedPropertyId(String(id));
@@ -948,20 +949,20 @@ function PropertiesView({ ready, properties, form, setForm, save, remove }) {
               </Field>
             </div>
             <div className="grid two">
-              <Field label="Heating carrier" help="Select the energy carrier behind the heating kWh entered in monthly usage.">
-                <select value={form.heating_carrier || "district_heating"} onChange={(e) => set("heating_carrier", e.target.value)}>
+              <Field label="Heating carrier" help="Select the energy carrier behind the heating kWh entered in monthly usage. District heating requires a supplier/operator emissions factor override.">
+                <select value={form.heating_carrier || "natural_gas"} onChange={(e) => set("heating_carrier", e.target.value)}>
                   {HEATING_CARRIER_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
                 </select>
               </Field>
-              <Field label="Cooling carrier" help="Select the energy carrier behind the cooling kWh entered in monthly usage.">
-                <select value={form.cooling_carrier || "district_cooling"} onChange={(e) => set("cooling_carrier", e.target.value)}>
+              <Field label="Cooling carrier" help="Select the energy carrier behind the cooling kWh entered in monthly usage. District cooling requires a supplier/operator emissions factor override.">
+                <select value={form.cooling_carrier || "electric"} onChange={(e) => set("cooling_carrier", e.target.value)}>
                   {COOLING_CARRIER_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
                 </select>
               </Field>
             </div>
             <div className="grid two">
-              <Field label="Optional heating emissions factor override" help="Only enter this if you have a project-specific heating emissions factor in kgCO2e/kWh. Leave blank to use the default for the selected heating carrier."><input type="number" step="0.0001" value={form.heating_emission_factor_kgco2e_per_kwh ?? ""} onChange={(e) => set("heating_emission_factor_kgco2e_per_kwh", e.target.value)} /></Field>
-              <Field label="Optional cooling emissions factor override" help="Only enter this if you have a project-specific cooling emissions factor in kgCO2e/kWh. Leave blank to use the default for the selected cooling carrier."><input type="number" step="0.0001" value={form.cooling_emission_factor_kgco2e_per_kwh ?? ""} onChange={(e) => set("cooling_emission_factor_kgco2e_per_kwh", e.target.value)} /></Field>
+              <Field label="Heating emissions factor override" help="Required for district heating. Optional for other carriers if you have a project-specific factor in kgCO2e/kWh."><input type="number" step="0.0001" value={form.heating_emission_factor_kgco2e_per_kwh ?? ""} onChange={(e) => set("heating_emission_factor_kgco2e_per_kwh", e.target.value)} /></Field>
+              <Field label="Cooling emissions factor override" help="Required for district cooling. Optional for other carriers if you have a project-specific factor in kgCO2e/kWh."><input type="number" step="0.0001" value={form.cooling_emission_factor_kgco2e_per_kwh ?? ""} onChange={(e) => set("cooling_emission_factor_kgco2e_per_kwh", e.target.value)} /></Field>
             </div>
             <div className="grid two">
               <Field label="On-site renewable consumed kWh/a" help="Annual renewable energy generated and used on site. Counts in EUI with zero carbon."><input type="number" step="0.01" value={form.renewable_consumed_kwh ?? ""} onChange={(e) => set("renewable_consumed_kwh", e.target.value)} /></Field>
@@ -991,7 +992,7 @@ function PropertiesView({ ready, properties, form, setForm, save, remove }) {
                   </td>
                   <td>{money(property.total_floor_area)} m²</td>
                   <td>{normaliseCrremSettings(property).country} / {normaliseCrremSettings(property).propertyType}</td>
-                  <td>{carrierLabel(HEATING_CARRIER_OPTIONS, property.heating_carrier || "district_heating")} / {carrierLabel(COOLING_CARRIER_OPTIONS, property.cooling_carrier || "district_cooling")}</td>
+                  <td>{carrierLabel(HEATING_CARRIER_OPTIONS, property.heating_carrier || "natural_gas")} / {carrierLabel(COOLING_CARRIER_OPTIONS, property.cooling_carrier || "electric")}</td>
                   <td>Elec €{money(property.elec_cost_eur_per_kwh)} / Heat €{money(property.heating_cost_eur_per_kwh)} / Cool €{money(property.cooling_cost_eur_per_kwh)}</td>
                   <td><button className="btn danger" type="button" onClick={() => remove(property.id)}>Remove</button></td>
                 </tr>
@@ -1360,9 +1361,9 @@ function CrremView({ ready, properties, selectedPropertyId, setSelectedPropertyI
             <div className="card">
               <h3>Method</h3>
               <p className="muted">
-                Historical points use every complete calendar year available from CRREM monthly usage. The app prefers whole-building records and only aggregates tenant rows when no whole-building records exist for the property. The baseline reference remains {analysis.baseline.label}. Future points only start after the latest complete actual year and hold annual energy demand flat from {analysis.projectionBase?.label || analysis.baseline.label} through 2050. On-site renewables consumed count in EUI with zero carbon; exported renewables create a capped grid export credit.
+                Historical points use every complete calendar year available from CRREM monthly usage. The app prefers whole-building records and only aggregates tenant rows when no whole-building records exist for the property. The baseline reference remains {analysis.baseline.label}. Future points only start after the latest complete actual year and hold annual energy demand flat from {analysis.projectionBase?.label || analysis.baseline.label} through 2050. Electricity and fixed non-electric carrier factors use CRREM Emission Factors v2.05. District heating and cooling require a user-supplied operator emissions factor.
               </p>
-              <p className="muted">CRREM data: {CRREM_DATA_VERSION}. {CRREM_DATA_ATTRIBUTION}</p>
+              <p className="muted">CRREM data: {CRREM_DATA_VERSION}. {CRREM_DATA_ATTRIBUTION}. {CRREM_EMISSION_FACTORS_SOURCE}</p>
             </div>
           </div>
           <CrremFormulaBlock />
@@ -1731,6 +1732,7 @@ function formatCrremNumber(value) {
 }
 
 function formatCrremFactor(value) {
+  if (value === null || value === undefined || value === "") return "requires override";
   const n = Number(value);
   if (!Number.isFinite(n)) return "";
   return n.toFixed(4);
@@ -1752,8 +1754,8 @@ function propertyToForm(property) {
     total_floor_area: property.total_floor_area ?? "",
     crrem_country: property.crrem_country || inferCrremCountry(property),
     crrem_property_type: property.crrem_property_type || "Office",
-    heating_carrier: property.heating_carrier || "district_heating",
-    cooling_carrier: property.cooling_carrier || "district_cooling",
+    heating_carrier: property.heating_carrier || "natural_gas",
+    cooling_carrier: property.cooling_carrier || "electric",
     renewable_consumed_kwh: property.renewable_consumed_kwh ?? "",
     renewable_exported_kwh: property.renewable_exported_kwh ?? "",
     heating_emission_factor_kgco2e_per_kwh: property.heating_emission_factor_kgco2e_per_kwh ?? "",

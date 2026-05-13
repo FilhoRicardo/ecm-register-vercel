@@ -1,7 +1,7 @@
 import { kwh, money, slug, todayIso, utilityCost, yamlQuote } from "./format.js";
 
 export function ecmFilename(ecm) {
-  return `${slug(ecm.ref || `ECM_${ecm.id}`)}_${slug(ecm.title, "ECM")}.md`;
+  return `${slug(ecm.ref || `ECM_${ecm.id}`)}_${slug(ecm.title, "ECM")}_db${ecm.id}.md`;
 }
 
 export function savingFilename(saving) {

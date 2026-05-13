@@ -252,10 +252,20 @@ export default function App() {
       const nextDb = await openDatabaseFromHandle(fileHandle);
       setDb(nextDb);
       setDbFileHandle(fileHandle);
+      let ecmSyncMessage = "";
+      if (allHandles.ecmNotes && statuses.ecmNotes === "granted") {
+        try {
+          const synced = await writeAllEcmMarkdownFiles(nextDb, allHandles.ecmNotes, { requestPermission: false });
+          await saveDatabase(nextDb, fileHandle);
+          ecmSyncMessage = ` Synced ${synced.count} ECM Markdown notes.`;
+        } catch (syncError) {
+          ecmSyncMessage = ` ECM Markdown sync skipped: ${syncError.message || String(syncError)}`;
+        }
+      }
       const nextData = getPortfolio(nextDb);
       setData(nextData);
       setActive("dashboard");
-      notify(`Workspace loaded: ${nextData.properties.length} properties, ${nextData.ecms.length} ECMs.`);
+      notify(`Workspace loaded: ${nextData.properties.length} properties, ${nextData.ecms.length} ECMs.${ecmSyncMessage}`);
     } catch (error) {
       setSetupError(error.message || String(error));
       notify("Database load failed.");
@@ -394,15 +404,9 @@ export default function App() {
         savingNotes: savingPermission ? "granted" : "denied"
       }));
       if (!ecmPermission || !savingPermission) throw new Error("Obsidian note folder permissions were not granted.");
+      const ecmSync = await writeAllEcmMarkdownFiles(db, handles.ecmNotes, { requestPermission: false });
       const propertiesNow = getProperties(db);
       const ecmsNow = getEcms(db);
-      for (const ecm of ecmsNow) {
-        const property = propertiesNow.find((item) => item.id === ecm.property_id);
-        const attachments = getAttachments(db, ecm.id);
-        const filename = ecm.obsidian_filename || ecmFilename(ecm);
-        await writeTextIntoFolder(handles.ecmNotes, filename, buildEcmMarkdown(ecm, property, attachments));
-        setEcmObsidianFilename(db, ecm.id, filename);
-      }
       const savingsNow = getImplementedSavings(db);
       for (const saving of savingsNow) {
         const ecm = ecmsNow.find((item) => item.id === saving.ecm_id);
@@ -411,12 +415,45 @@ export default function App() {
         await writeTextIntoFolder(handles.savingNotes, filename, buildSavingMarkdown(saving, ecm, property));
         setSavingObsidianFilename(db, saving.id, filename);
       }
-      await persist(`Synced ${ecmsNow.length} ECM notes and ${savingsNow.length} implemented-savings notes to Obsidian.`);
+      await persist(`Synced ${ecmSync.count} ECM notes and ${savingsNow.length} implemented-savings notes to Obsidian.`);
     } catch (error) {
       notify(error.message || String(error));
     } finally {
       setBusy(false);
     }
+  }
+
+  async function syncEcmMarkdownNotes() {
+    setBusy(true);
+    try {
+      const ecmSync = await writeAllEcmMarkdownFiles(db, handles.ecmNotes);
+      await persist(`Synced ${ecmSync.count} ECM Markdown files to Obsidian.`);
+    } catch (error) {
+      notify(error.message || String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function writeAllEcmMarkdownFiles(targetDb, ecmNotesHandle, options = {}) {
+    if (!targetDb) throw new Error("Load a database before syncing ECM notes.");
+    if (!ecmNotesHandle) throw new Error("Configure the ECM Notes folder first.");
+    const requestPermission = options.requestPermission !== false;
+    const granted = requestPermission
+      ? await ensurePermission(ecmNotesHandle, "readwrite")
+      : (await permissionState(ecmNotesHandle, "readwrite")) === "granted";
+    setFolderStatuses((prev) => ({ ...prev, ecmNotes: granted ? "granted" : "denied" }));
+    if (!granted) throw new Error("ECM Notes folder permission was not granted.");
+    const propertiesNow = getProperties(targetDb);
+    const ecmsNow = getEcms(targetDb);
+    for (const ecm of ecmsNow) {
+      const property = propertiesNow.find((item) => item.id === ecm.property_id);
+      const attachments = getAttachments(targetDb, ecm.id);
+      const filename = ecm.obsidian_filename || ecmFilename(ecm);
+      await writeTextIntoFolder(ecmNotesHandle, filename, buildEcmMarkdown(ecm, property, attachments));
+      if (ecm.obsidian_filename !== filename) setEcmObsidianFilename(targetDb, ecm.id, filename);
+    }
+    return { count: ecmsNow.length };
   }
 
   async function createDatabaseBackup() {
@@ -832,6 +869,7 @@ export default function App() {
             db={db}
             data={data}
             syncObsidianNotes={syncObsidianNotes}
+            syncEcmMarkdownNotes={syncEcmMarkdownNotes}
             createDatabaseBackup={createDatabaseBackup}
             downloadDatabaseFile={downloadDatabaseFile}
             busy={busy}
@@ -1495,7 +1533,7 @@ function DatabaseView({ ready, db, sqlText, setSqlText, runSql, sqlRows }) {
   );
 }
 
-function DatabaseAdminView({ ready, db, data, syncObsidianNotes, createDatabaseBackup, downloadDatabaseFile, busy }) {
+function DatabaseAdminView({ ready, db, data, syncObsidianNotes, syncEcmMarkdownNotes, createDatabaseBackup, downloadDatabaseFile, busy }) {
   if (!ready) return <EmptyState />;
   const health = databaseHealth(db);
   const integrity = health.integrity?.[0]?.integrity_check || "unknown";
@@ -1514,10 +1552,11 @@ function DatabaseAdminView({ ready, db, data, syncObsidianNotes, createDatabaseB
       <div className="card" style={{ marginTop: 14 }}>
         <div className="toolbar">
           <button className="btn primary" disabled={busy} onClick={syncObsidianNotes}>{busy ? "Syncing..." : "Sync DB Records to Obsidian"}</button>
+          <button className="btn" disabled={busy} onClick={syncEcmMarkdownNotes}>Sync ECM Markdown Files</button>
           <button className="btn" onClick={createDatabaseBackup}>Create Local DB Backup</button>
           <button className="btn" onClick={downloadDatabaseFile}>Download DB File</button>
         </div>
-        <p className="muted">Sync writes ECM and implemented-savings Markdown files for existing database records and stores the generated filenames back into SQLite.</p>
+        <p className="muted">Sync writes ECM and implemented-savings Markdown files for existing database records and stores the generated filenames back into SQLite. Use the ECM-only sync when you only need the ECM folder updated.</p>
       </div>
       <div className="card" style={{ overflow: "auto", marginTop: 14 }}>
         <table>

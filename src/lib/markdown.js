@@ -1,7 +1,9 @@
 import { kwh, money, slug, todayIso, utilityCost, yamlQuote } from "./format.js";
 
-export function ecmFilename(ecm) {
-  return `${slug(ecm.ref || `ECM_${ecm.id}`)}_${slug(ecm.title, "ECM")}_db${ecm.id}.md`;
+export function ecmFilename(ecm, property, sequence = 1) {
+  const ecmNumber = String(sequence || 1).padStart(2, "0");
+  const dateText = String(ecm.created_at || ecm.updated_at || todayIso()).slice(0, 10).replace(/-/g, "");
+  return `ECM${ecmNumber}_${dateText}_${slug(property?.name || ecm.property_name || "Property")}.md`;
 }
 
 export function savingFilename(saving) {

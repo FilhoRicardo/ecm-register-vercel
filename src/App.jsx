@@ -449,7 +449,7 @@ export default function App() {
     for (const ecm of ecmsNow) {
       const property = propertiesNow.find((item) => item.id === ecm.property_id);
       const attachments = getAttachments(targetDb, ecm.id);
-      const filename = ecm.obsidian_filename || ecmFilename(ecm);
+      const filename = ecm.obsidian_filename || ecmFilename(ecm, property, ecmSequence(ecmsNow, ecm));
       await writeTextIntoFolder(ecmNotesHandle, filename, buildEcmMarkdown(ecm, property, attachments));
       if (ecm.obsidian_filename !== filename) setEcmObsidianFilename(targetDb, ecm.id, filename);
     }
@@ -510,7 +510,8 @@ export default function App() {
       }
       ecm = getEcms(db).find((item) => item.id === id);
       const attachments = getAttachments(db, id);
-      const filename = ecm.obsidian_filename || ecmFilename(ecm);
+      const ecmsNow = getEcms(db);
+      const filename = ecm.obsidian_filename || ecmFilename(ecm, property, ecmSequence(ecmsNow, ecm));
       await writeTextIntoFolder(handles.ecmNotes, filename, buildEcmMarkdown(ecm, property, attachments));
       setEcmObsidianFilename(db, id, filename);
       setCalcFile(null);
@@ -542,6 +543,14 @@ export default function App() {
     setSelectedEcmId("");
     setEcmForm({ ...EMPTY_ECM, property_id: selectedProperty?.id || "" });
     await persist("ECM deleted from database.");
+  }
+
+  function ecmSequence(ecms, ecm) {
+    const propertyEcms = (ecms || [])
+      .filter((item) => item.property_id === ecm.property_id)
+      .sort((a, b) => Number(a.id) - Number(b.id));
+    const index = propertyEcms.findIndex((item) => item.id === ecm.id);
+    return index >= 0 ? index + 1 : propertyEcms.length + 1;
   }
 
   async function saveImplementedSaving(event) {
@@ -677,7 +686,7 @@ export default function App() {
         if (canWriteNotes && saved) {
           const property = propertiesNow.find((item) => item.id === saved.property_id);
           const attachments = getAttachments(db, saved.id);
-          const filename = saved.obsidian_filename || ecmFilename(saved);
+          const filename = saved.obsidian_filename || ecmFilename(saved, property, ecmSequence(getEcms(db), saved));
           await writeTextIntoFolder(handles.ecmNotes, filename, buildEcmMarkdown(saved, property, attachments));
           setEcmObsidianFilename(db, saved.id, filename);
         }

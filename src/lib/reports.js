@@ -171,6 +171,34 @@ export async function downloadEcmReviewWorkbook(db, property = null) {
   downloadBlob(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), filename);
 }
 
+export async function downloadUsageWorkbook(db) {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "ECM Register";
+  workbook.created = new Date();
+  const usage = getMonthlyUsage(db);
+
+  const all = workbook.addWorksheet("All Usage", { views: [{ state: "frozen", ySplit: 1 }] });
+  const landlord = workbook.addWorksheet("Landlord Usage", { views: [{ state: "frozen", ySplit: 1 }] });
+  const tenants = workbook.addWorksheet("Tenant Usage", { views: [{ state: "frozen", ySplit: 1 }] });
+  const headers = ["usage_id", "property_id", "property_name", "scope", "tenant_id", "tenant_name", "usage_month", "electricity_kwh", "heating_kwh", "cooling_kwh", "notes"];
+
+  for (const sheet of [all, landlord, tenants]) {
+    sheet.addRow(headers);
+  }
+  for (const row of usage) {
+    const values = usageExportRow(row);
+    all.addRow(values);
+    if (row.scope_type === "tenant") tenants.addRow(values);
+    else landlord.addRow(values);
+  }
+  for (const sheet of [all, landlord, tenants]) {
+    styleUsageWorkbook(sheet);
+  }
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  downloadBlob(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), "Monthly_Usage_Data.xlsx");
+}
+
 export async function parseEcmReviewWorkbook(file) {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(await file.arrayBuffer());
@@ -966,6 +994,50 @@ function simplePayback(ecm) {
   const investment = Number(ecm.investment_eur || 0);
   if (!annual || !investment) return null;
   return investment / annual;
+}
+
+function usageExportRow(row) {
+  return [
+    Number(row.id),
+    Number(row.property_id),
+    row.property_name || "",
+    row.scope_type === "tenant" ? "Tenant" : "Landlord",
+    row.tenant_id ? Number(row.tenant_id) : null,
+    row.tenant_name || "",
+    row.usage_month || "",
+    numberOrNull(row.electricity_kwh),
+    numberOrNull(row.heating_kwh),
+    numberOrNull(row.cooling_kwh),
+    row.notes || ""
+  ];
+}
+
+function styleUsageWorkbook(worksheet) {
+  const border = excelBorder("FFD9E2F3");
+  const headerFill = "FF1F4E78";
+  const widths = [10, 12, 28, 14, 10, 32, 14, 16, 14, 14, 50];
+  widths.forEach((width, index) => {
+    worksheet.getColumn(index + 1).width = width;
+  });
+  worksheet.getRow(1).height = 28;
+  worksheet.getRow(1).eachCell((cell) => {
+    cell.fill = solidFill(headerFill);
+    cell.font = { color: { argb: "FFFFFFFF" }, bold: true };
+    cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+    cell.border = border;
+  });
+  worksheet.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return;
+    row.eachCell((cell, colNumber) => {
+      cell.border = border;
+      cell.alignment = { vertical: "top", wrapText: true };
+      if ([8, 9, 10].includes(colNumber)) cell.numFmt = '#,##0.00';
+    });
+  });
+  worksheet.autoFilter = {
+    from: { row: 1, column: 1 },
+    to: { row: 1, column: widths.length }
+  };
 }
 
 function addListValidation(worksheet, range, values) {

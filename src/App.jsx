@@ -32,7 +32,7 @@ import {
 import { downloadBlob, ensurePermission, idbGet, idbSet, permissionState, supportsFileSystemAccess, writeFile } from "./lib/storage.js";
 import { listMarkdownFiles, routeCalculationFile, writeTextIntoFolder } from "./lib/files.js";
 import { buildEcmMarkdown, buildMeetingMarkdown, buildSavingMarkdown, ecmFilename, extractMeetingSections, meetingFilename, replaceMeetingSections, savingFilename } from "./lib/markdown.js";
-import { downloadCrremPdfReport, downloadEcmReviewWorkbook, downloadExcelRegister, downloadPptxRegister, parseEcmReviewWorkbook } from "./lib/reports.js";
+import { downloadCrremPdfReport, downloadEcmReviewWorkbook, downloadExcelRegister, downloadPptxRegister, downloadUsageWorkbook, parseEcmReviewWorkbook } from "./lib/reports.js";
 import { EQUIPMENT_TYPE_TO_BRICK_CLASS, kwh, money, todayIso, utilityCost } from "./lib/format.js";
 import {
   buildCrremAnalysis,
@@ -371,15 +371,16 @@ export default function App() {
     await persist("Equipment deleted.");
   }
 
-  async function saveUsage(event) {
+  async function saveUsage(event, override = {}) {
     event.preventDefault();
+    const nextUsage = { ...usageForm, ...override };
     upsertMonthlyUsage(db, {
-      ...usageForm,
-      id: usageForm.id || null,
-      property_id: Number(usageForm.property_id),
-      tenant_id: usageForm.scope_type === "tenant" && usageForm.tenant_id ? Number(usageForm.tenant_id) : null
+      ...nextUsage,
+      id: nextUsage.id || null,
+      property_id: Number(nextUsage.property_id),
+      tenant_id: nextUsage.scope_type === "tenant" && nextUsage.tenant_id ? Number(nextUsage.tenant_id) : null
     });
-    setUsageForm({ ...defaultUsageForm(), property_id: selectedPropertyId || usageForm.property_id });
+    setUsageForm({ ...defaultUsageForm(), property_id: selectedPropertyId || nextUsage.property_id, scope_type: nextUsage.scope_type });
     await persist("Monthly usage saved.");
   }
 
@@ -833,6 +834,7 @@ export default function App() {
             setForm={setUsageForm}
             save={saveUsage}
             remove={removeUsage}
+            downloadUsage={() => downloadUsageWorkbook(db)}
           />
         )}
         {active === "crrem" && (
@@ -1257,25 +1259,83 @@ function SavingsView({ ready, properties, implementedEcms, savings, form, setFor
   );
 }
 
-function MonthlyUsageView({ ready, properties, tenants, usage, form, setForm, save, remove }) {
+function MonthlyUsageView({ ready, properties, tenants, usage, form, setForm, save, remove, downloadUsage }) {
+  const [usageTab, setUsageTab] = useState(form.scope_type === "tenant" ? "tenant" : "landlord");
   if (!ready) return <EmptyState />;
   const propertyTenants = tenants.filter((tenant) => tenant.property_id === Number(form.property_id));
-  const scopedUsage = usage.filter((row) => !form.property_id || row.property_id === Number(form.property_id)).slice(0, 80);
-  const set = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
+  const selectedPropertyId = Number(form.property_id);
+  const landlordUsage = usage
+    .filter((row) => (!selectedPropertyId || row.property_id === selectedPropertyId) && row.scope_type !== "tenant")
+    .slice(0, 120);
+  const tenantUsage = usage
+    .filter((row) => (!selectedPropertyId || row.property_id === selectedPropertyId) && row.scope_type === "tenant")
+    .slice(0, 160);
+  const activeUsage = usageTab === "tenant" ? tenantUsage : landlordUsage;
+  const set = (key, value) => setForm((prev) => {
+    const next = { ...prev, [key]: value };
+    if (key === "property_id") next.tenant_id = "";
+    return next;
+  });
+  const switchUsageTab = (tab) => {
+    setUsageTab(tab);
+    setForm((prev) => ({
+      ...prev,
+      scope_type: tab === "tenant" ? "tenant" : "building",
+      tenant_id: tab === "tenant" ? prev.tenant_id : ""
+    }));
+  };
+  const editUsage = (row) => {
+    const tab = row.scope_type === "tenant" ? "tenant" : "landlord";
+    setUsageTab(tab);
+    setForm({
+      ...row,
+      property_id: String(row.property_id),
+      tenant_id: row.tenant_id ? String(row.tenant_id) : "",
+      scope_type: tab === "tenant" ? "tenant" : "building"
+    });
+  };
+  const newUsageRecord = () => setForm({
+    ...defaultUsageForm(),
+    property_id: form.property_id,
+    scope_type: usageTab === "tenant" ? "tenant" : "building",
+    tenant_id: ""
+  });
+  const saveUsage = (event) => {
+    save(event, {
+      scope_type: usageTab === "tenant" ? "tenant" : "building",
+      tenant_id: usageTab === "tenant" ? form.tenant_id : ""
+    });
+  };
   return (
     <section className="section">
-      <h3>Monthly Usage</h3>
+      <div className="section-head">
+        <div>
+          <h3>Monthly Consumption</h3>
+          <p className="muted">Landlord consumption is stored separately from tenant consumption. Tenant choices are filtered by the selected building.</p>
+        </div>
+        <button className="btn" type="button" onClick={downloadUsage}>Download Usage Data</button>
+      </div>
+      <div className="tabs">
+        <button className={usageTab === "landlord" ? "active" : ""} type="button" onClick={() => switchUsageTab("landlord")}>Landlord Consumption</button>
+        <button className={usageTab === "tenant" ? "active" : ""} type="button" onClick={() => switchUsageTab("tenant")}>Tenant Monthly Consumption</button>
+      </div>
       <div className="grid two">
         <div className="card">
-          <form onSubmit={save}>
+          <form onSubmit={saveUsage}>
             <div className="grid two">
               <Field label="Property"><select value={form.property_id} onChange={(e) => set("property_id", e.target.value)}>{properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
               <Field label="Month"><input type="month" value={form.usage_month} onChange={(e) => set("usage_month", e.target.value)} required /></Field>
             </div>
-            <div className="grid two">
-              <Field label="Scope"><select value={form.scope_type} onChange={(e) => set("scope_type", e.target.value)}><option value="building">Whole building</option><option value="tenant">Tenant</option></select></Field>
-              <Field label="Tenant">{form.scope_type === "tenant" ? <select value={form.tenant_id} onChange={(e) => set("tenant_id", e.target.value)}><option value="">Select tenant...</option>{propertyTenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.tenant_name} - {tenant.location_label}</option>)}</select> : <input value="Whole building" disabled />}</Field>
-            </div>
+            {usageTab === "tenant" ? (
+              <Field label="Tenant">
+                <select value={form.tenant_id} onChange={(e) => set("tenant_id", e.target.value)} required>
+                  <option value="">Select tenant...</option>
+                  {propertyTenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.tenant_name} - {tenant.location_label}</option>)}
+                </select>
+              </Field>
+            ) : (
+              <Field label="Scope"><input value="Landlord consumption" disabled /></Field>
+            )}
             <div className="grid three">
               <Field label="Electricity kWh"><input type="number" step="0.01" value={form.electricity_kwh} onChange={(e) => set("electricity_kwh", e.target.value)} /></Field>
               <Field label="Heating kWh"><input type="number" step="0.01" value={form.heating_kwh} onChange={(e) => set("heating_kwh", e.target.value)} /></Field>
@@ -1283,25 +1343,26 @@ function MonthlyUsageView({ ready, properties, tenants, usage, form, setForm, sa
             </div>
             <Field label="Notes"><textarea value={form.notes} onChange={(e) => set("notes", e.target.value)} /></Field>
             <div className="toolbar">
-              <button className="btn primary">Save Usage</button>
-              <button className="btn" type="button" onClick={() => setForm({ ...defaultUsageForm(), property_id: form.property_id })}>New Usage Record</button>
+              <button className="btn primary">Save {usageTab === "tenant" ? "Tenant" : "Landlord"} Usage</button>
+              <button className="btn" type="button" onClick={newUsageRecord}>New Usage Record</button>
             </div>
           </form>
         </div>
         <div className="card" style={{ overflow: "auto", maxHeight: 680 }}>
           <table>
-            <thead><tr><th>Month</th><th>Scope</th><th>Electricity</th><th>Heating</th><th>Cooling</th><th></th></tr></thead>
+            <thead><tr><th>Month</th><th>{usageTab === "tenant" ? "Tenant" : "Scope"}</th><th>Electricity</th><th>Heating</th><th>Cooling</th><th></th></tr></thead>
             <tbody>
-              {scopedUsage.map((row) => (
+              {activeUsage.map((row) => (
                 <tr key={row.id}>
-                  <td onClick={() => setForm({ ...row, property_id: String(row.property_id), tenant_id: row.tenant_id ? String(row.tenant_id) : "" })} style={{ cursor: "pointer" }}>{row.usage_month}</td>
-                  <td>{row.scope_type === "tenant" ? row.tenant_name : "Whole building"}</td>
+                  <td onClick={() => editUsage(row)} style={{ cursor: "pointer" }}>{row.usage_month}</td>
+                  <td>{row.scope_type === "tenant" ? row.tenant_name : "Landlord"}</td>
                   <td>{kwh(row.electricity_kwh)} kWh</td>
                   <td>{kwh(row.heating_kwh)} kWh</td>
                   <td>{kwh(row.cooling_kwh)} kWh</td>
                   <td><button className="btn danger" type="button" onClick={() => remove(row.id)}>Remove</button></td>
                 </tr>
               ))}
+              {!activeUsage.length ? <tr><td colSpan="6" className="muted">No {usageTab === "tenant" ? "tenant" : "landlord"} usage records for this building yet.</td></tr> : null}
             </tbody>
           </table>
         </div>

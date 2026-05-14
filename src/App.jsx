@@ -59,6 +59,7 @@ const FOLDERS = [
 ];
 
 const NAV = [
+  ["benchmark", "\u{1F3C1} Benchmark"],
   ["welcome", "👋 Welcome"],
   ["setup", "⚙️ Setup"],
   ["dashboard", "🎯 Dashboard"],
@@ -902,6 +903,15 @@ export default function App() {
             monthlyUsage={data?.monthlyUsage || []}
           />
         )}
+        {active === "benchmark" && (
+          <BenchmarkView
+            ready={ready}
+            properties={properties}
+            selectedPropertyId={selectedPropertyId}
+            setSelectedPropertyId={setSelectedPropertyId}
+            monthlyUsage={data?.monthlyUsage || []}
+          />
+        )}
         {active === "crrem" && (
           <CrremView
             ready={ready}
@@ -1630,6 +1640,124 @@ function DataView({ ready, properties, selectedPropertyId, setSelectedPropertyId
   );
 }
 
+function BenchmarkView({ ready, properties, selectedPropertyId, setSelectedPropertyId, monthlyUsage }) {
+  const selectedId = Number(selectedPropertyId) || properties[0]?.id || "";
+  const property = properties.find((item) => item.id === Number(selectedId)) || properties[0] || null;
+  const availableYears = useMemo(() => benchmarkYears(monthlyUsage, property?.id), [monthlyUsage, property?.id]);
+  const [year, setYear] = useState("");
+  const [nlaOverride, setNlaOverride] = useState("");
+
+  useEffect(() => {
+    if (!availableYears.length) return;
+    setYear((prev) => availableYears.includes(prev) ? prev : availableYears[0]);
+  }, [availableYears]);
+
+  if (!ready) return <EmptyState />;
+  const analysis = buildBenchmarkAnalysis({ property, monthlyUsage, year: year || availableYears[0], nlaOverride });
+  const currentYear = year || availableYears[0] || String(new Date().getFullYear());
+
+  return (
+    <section className="section benchmark-section">
+      <div className="section-head">
+        <div>
+          <h3>Benchmark</h3>
+          <p className="muted">REEB office benchmark view using landlord / whole-building monthly consumption.</p>
+        </div>
+      </div>
+      <div className="card data-controls">
+        <div className="grid three">
+          <Field label="Property">
+            <select value={property?.id || ""} onChange={(e) => setSelectedPropertyId(e.target.value)}>
+              {properties.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Benchmark year" help="The page uses full or partial landlord usage records for this calendar year.">
+            <select value={currentYear} onChange={(e) => setYear(e.target.value)}>
+              {availableYears.length ? availableYears.map((item) => <option key={item} value={item}>{item}</option>) : <option value={currentYear}>{currentYear}</option>}
+            </select>
+          </Field>
+          <Field label="NLA override m2" help="REEB electricity-equivalent benchmark uses NLA. If blank, the app uses the property floor area as a temporary proxy.">
+            <input type="number" min="0" step="0.01" value={nlaOverride} onChange={(e) => setNlaOverride(e.target.value)} placeholder={analysis.gia ? String(analysis.gia) : "Enter NLA"} />
+          </Field>
+        </div>
+      </div>
+
+      {!analysis.ok ? (
+        <div className="card" style={{ marginTop: 14 }}>
+          <h3>Benchmark input needed</h3>
+          <p className="muted">{analysis.error}</p>
+        </div>
+      ) : (
+        <>
+          <div className="grid four data-kpis" style={{ marginTop: 14 }}>
+            <Kpi label="Months present" value={`${analysis.monthsPresent}/12`} />
+            <Kpi label="Total energy" value={`${kwh(analysis.totalEnergyKwh)} kWh`} />
+            <Kpi label="Total energy intensity" value={`${formatBenchmarkNumber(analysis.totalEnergyIntensity)} kWh/m2`} />
+            <Kpi label="Elec. equivalent intensity" value={`${formatBenchmarkNumber(analysis.electricityEquivalentIntensity)} kWh/m2`} />
+          </div>
+          <div className="benchmark-grid">
+            <div className="card">
+              <h3>REEB Office Method</h3>
+              <p className="muted">
+                This page compares the selected property against the office benchmark figures from your REEB reference screenshot.
+                Benchmarks are whole-building values and should only be used where offices represent more than 75% of the reporting area.
+              </p>
+              <table className="benchmark-factor-table">
+                <thead><tr><th>Carrier</th><th>Electricity equivalent factor</th></tr></thead>
+                <tbody>
+                  {REEB_FACTOR_ROWS.map((row) => <tr key={row.label}><td>{row.label}</td><td>{row.factor.toFixed(2)}</td></tr>)}
+                </tbody>
+              </table>
+              <div className="benchmark-note">
+                <strong>Area basis</strong>
+                <span>Total energy uses GIA. Electricity equivalent uses NLA. Current app data has one stored floor-area field, so NLA defaults to the same value unless you override it above.</span>
+              </div>
+              {analysis.warnings.map((warning) => <div key={warning} className="benchmark-warning">{warning}</div>)}
+            </div>
+            <div className="card benchmark-chart-card">
+              <div className="chart-head">
+                <h3>Office energy benchmark</h3>
+                <span className="muted">kWh/m2/year</span>
+              </div>
+              <BenchmarkComparisonChart analysis={analysis} />
+            </div>
+          </div>
+          <div className="grid two" style={{ marginTop: 14 }}>
+            <div className="card">
+              <h3>Inputs Used</h3>
+              <table>
+                <tbody>
+                  <tr><th>Year</th><td>{analysis.year}</td></tr>
+                  <tr><th>GIA</th><td>{formatBenchmarkNumber(analysis.gia)} m2</td></tr>
+                  <tr><th>NLA</th><td>{formatBenchmarkNumber(analysis.nla)} m2</td></tr>
+                  <tr><th>Electricity</th><td>{kwh(analysis.usage.electricity_kwh)} kWh</td></tr>
+                  <tr><th>Heating</th><td>{kwh(analysis.usage.heating_kwh)} kWh - factor {formatBenchmarkNumber(analysis.heatingFactor)}</td></tr>
+                  <tr><th>Cooling</th><td>{kwh(analysis.usage.cooling_kwh)} kWh - factor {formatBenchmarkNumber(analysis.coolingFactor)}</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div className="card">
+              <h3>Benchmark Status</h3>
+              <BenchmarkStatus
+                label="Electricity equivalent"
+                value={analysis.electricityEquivalentIntensity}
+                good={REEB_OFFICE_BENCHMARKS.electricityEquivalent.good}
+                typical={REEB_OFFICE_BENCHMARKS.electricityEquivalent.typical}
+              />
+              <BenchmarkStatus
+                label="Total energy"
+                value={analysis.totalEnergyIntensity}
+                good={REEB_OFFICE_BENCHMARKS.totalEnergy.good}
+                typical={REEB_OFFICE_BENCHMARKS.totalEnergy.typical}
+              />
+            </div>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
 function CrremView({ ready, properties, selectedPropertyId, setSelectedPropertyId, monthlyUsage }) {
   const [mode, setMode] = useState("first_complete_year");
   const [reportingYear, setReportingYear] = useState("");
@@ -2067,6 +2195,82 @@ function DataHealthTable({ years, health }) {
   );
 }
 
+function BenchmarkComparisonChart({ analysis }) {
+  const width = 820;
+  const height = 340;
+  const pad = { left: 205, right: 26, top: 24, bottom: 42 };
+  const rows = [
+    {
+      key: "electricityEquivalent",
+      label: "Electricity equivalent",
+      asset: analysis.electricityEquivalentIntensity,
+      good: REEB_OFFICE_BENCHMARKS.electricityEquivalent.good,
+      typical: REEB_OFFICE_BENCHMARKS.electricityEquivalent.typical
+    },
+    {
+      key: "totalEnergy",
+      label: "Total energy",
+      asset: analysis.totalEnergyIntensity,
+      good: REEB_OFFICE_BENCHMARKS.totalEnergy.good,
+      typical: REEB_OFFICE_BENCHMARKS.totalEnergy.typical
+    }
+  ];
+  const maxValue = Math.max(...rows.flatMap((row) => [row.asset, row.good, row.typical]), 1) * 1.18;
+  const chartW = width - pad.left - pad.right;
+  const x = (value) => pad.left + (Number(value || 0) / maxValue) * chartW;
+  const groups = [
+    { key: "asset", label: "Asset", className: "asset" },
+    { key: "good", label: "Good practice", className: "good" },
+    { key: "typical", label: "Typical", className: "typical" }
+  ];
+  return (
+    <svg className="benchmark-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="REEB office benchmark comparison">
+      <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} className="chart-axis" />
+      <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} className="chart-axis" />
+      {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+        const value = maxValue * ratio;
+        const xx = x(value);
+        return (
+          <g key={ratio}>
+            <line x1={xx} y1={pad.top} x2={xx} y2={height - pad.bottom} className="chart-gridline" />
+            <text x={xx} y={height - 18} className="chart-label" textAnchor="middle">{formatBenchmarkNumber(value)}</text>
+          </g>
+        );
+      })}
+      {rows.map((row, rowIndex) => {
+        const baseY = pad.top + 46 + rowIndex * 124;
+        return (
+          <g key={row.key}>
+            <text x={18} y={baseY + 20} className="benchmark-row-label">{row.label}</text>
+            {groups.map((group, groupIndex) => {
+              const y = baseY + groupIndex * 26;
+              const value = row[group.key];
+              return (
+                <g key={`${row.key}-${group.key}`}>
+                  <text x={pad.left - 12} y={y + 13} className="chart-label" textAnchor="end">{group.label}</text>
+                  <rect x={pad.left} y={y} width={Math.max(2, x(value) - pad.left)} height="17" rx="3" className={`benchmark-bar ${group.className}`} />
+                  <text x={Math.min(width - pad.right - 8, x(value) + 8)} y={y + 13} className="benchmark-value-label">{formatBenchmarkNumber(value)}</text>
+                </g>
+              );
+            })}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function BenchmarkStatus({ label, value, good, typical }) {
+  const status = benchmarkStatus(value, good, typical);
+  return (
+    <div className={`benchmark-status ${status.className}`}>
+      <strong>{label}</strong>
+      <span>{formatBenchmarkNumber(value)} kWh/m2/year</span>
+      <em>{status.label}</em>
+    </div>
+  );
+}
+
 function UsageComparisonChart({ years, primaryYear, series }) {
   const width = 820;
   const height = 360;
@@ -2254,6 +2458,112 @@ function combineCrremSeries(historical, projected) {
 }
 
 const MONTH_LABELS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+const REEB_OFFICE_BENCHMARKS = {
+  electricityEquivalent: { good: 136, typical: 191 },
+  totalEnergy: { good: 112, typical: 163 }
+};
+
+const REEB_FACTOR_ROWS = [
+  { label: "Gas / LPG", factor: 0.76 },
+  { label: "Fuel oil", factor: 0.80 },
+  { label: "Wood pellets", factor: 0.91 },
+  { label: "District heating", factor: 0.91 },
+  { label: "District cooling", factor: 0.40 }
+];
+
+const REEB_ELECTRICITY_EQUIVALENT_FACTORS = {
+  natural_gas: 0.76,
+  lpg: 0.76,
+  heating_oil: 0.80,
+  biomass: 0.91,
+  district_heating: 0.91,
+  district_cooling: 0.40,
+  electric: 1,
+  none: 0
+};
+
+function benchmarkYears(rows = [], propertyId) {
+  const years = new Set();
+  for (const row of rows || []) {
+    if (propertyId && Number(row.property_id) !== Number(propertyId)) continue;
+    if ((row.scope_type || "building") !== "building") continue;
+    const year = String(row.usage_month || "").slice(0, 4);
+    if (/^\d{4}$/.test(year)) years.add(year);
+  }
+  return [...years].sort((a, b) => Number(b) - Number(a));
+}
+
+function buildBenchmarkAnalysis({ property, monthlyUsage = [], year, nlaOverride }) {
+  if (!property) return { ok: false, error: "Select a property first." };
+  const gia = Number(property.total_floor_area || 0);
+  if (!gia) return { ok: false, error: "This property needs a total floor area before it can be benchmarked." };
+  const nla = Number(nlaOverride || 0) || gia;
+  const selectedYear = String(year || "");
+  const rows = (monthlyUsage || []).filter((row) => (
+    Number(row.property_id) === Number(property.id)
+    && (row.scope_type || "building") === "building"
+    && String(row.usage_month || "").startsWith(`${selectedYear}-`)
+  ));
+  if (!selectedYear || !rows.length) return { ok: false, error: "No landlord / whole-building usage was found for the selected year." };
+  const usage = rows.reduce((sum, row) => ({
+    electricity_kwh: sum.electricity_kwh + Number(row.electricity_kwh || 0),
+    heating_kwh: sum.heating_kwh + Number(row.heating_kwh || 0),
+    cooling_kwh: sum.cooling_kwh + Number(row.cooling_kwh || 0)
+  }), { electricity_kwh: 0, heating_kwh: 0, cooling_kwh: 0 });
+  const months = new Set(rows.filter((row) => (
+    Number(row.electricity_kwh || 0) > 0 || Number(row.heating_kwh || 0) > 0 || Number(row.cooling_kwh || 0) > 0
+  )).map((row) => String(row.usage_month || "").slice(5, 7)));
+  const heatingFactorInfo = reebFactorForCarrier(property.heating_carrier, "heating");
+  const coolingFactorInfo = reebFactorForCarrier(property.cooling_carrier, "cooling");
+  const warnings = [];
+  if (!nlaOverride) warnings.push("NLA is currently defaulting to the stored property floor area. Enter an NLA override if you have the REEB reporting area.");
+  if (months.size < 12) warnings.push(`Only ${months.size}/12 months have usage values for ${selectedYear}. Benchmark intensity may be understated.`);
+  if (heatingFactorInfo.warning) warnings.push(heatingFactorInfo.warning);
+  if (coolingFactorInfo.warning) warnings.push(coolingFactorInfo.warning);
+  const totalEnergyKwh = usage.electricity_kwh + usage.heating_kwh + usage.cooling_kwh;
+  const electricityEquivalentKwh = usage.electricity_kwh
+    + usage.heating_kwh * heatingFactorInfo.factor
+    + usage.cooling_kwh * coolingFactorInfo.factor;
+  return {
+    ok: true,
+    year: selectedYear,
+    gia,
+    nla,
+    usage,
+    monthsPresent: months.size,
+    heatingFactor: heatingFactorInfo.factor,
+    coolingFactor: coolingFactorInfo.factor,
+    totalEnergyKwh,
+    electricityEquivalentKwh,
+    totalEnergyIntensity: totalEnergyKwh / gia,
+    electricityEquivalentIntensity: electricityEquivalentKwh / nla,
+    warnings
+  };
+}
+
+function reebFactorForCarrier(carrier, utility) {
+  const key = carrier || "none";
+  if (Object.prototype.hasOwnProperty.call(REEB_ELECTRICITY_EQUIVALENT_FACTORS, key)) {
+    return { factor: REEB_ELECTRICITY_EQUIVALENT_FACTORS[key], warning: "" };
+  }
+  return {
+    factor: 1,
+    warning: `${utility} carrier "${key}" is not shown in the REEB screenshot. The benchmark page is using factor 1.00 until a verified factor is configured.`
+  };
+}
+
+function benchmarkStatus(value, good, typical) {
+  if (Number(value) <= Number(good)) return { className: "good", label: "At or better than good practice" };
+  if (Number(value) <= Number(typical)) return { className: "mid", label: "Between good practice and typical" };
+  return { className: "high", label: "Above typical benchmark" };
+}
+
+function formatBenchmarkNumber(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "";
+  return n.toLocaleString(undefined, { maximumFractionDigits: 1, minimumFractionDigits: 0 });
+}
 
 function dataViewYears(rows = []) {
   const current = new Date().getFullYear();

@@ -3,6 +3,7 @@ import {
   databaseHealth,
   deleteEcm,
   deleteEquipment,
+  deleteImplementedSaving,
   deleteMonthlyUsage,
   deleteProperty,
   deleteTenant,
@@ -596,22 +597,48 @@ export default function App() {
       if (!handles.savingNotes || !(await ensurePermission(handles.savingNotes, "readwrite"))) throw new Error("Implemented Savings Notes folder permission was not granted.");
       setFolderStatuses((prev) => ({ ...prev, savingNotes: "granted" }));
       const ecm = data.ecms.find((item) => item.id === Number(savingForm.ecm_id));
-      const property = properties.find((item) => item.id === Number(savingForm.property_id));
-      const unitCost = savingForm.unit_cost_eur_per_kwh || utilityCost(property, savingForm.utility_type);
+      if (!ecm) throw new Error("Select an implemented ECM before saving measured savings.");
+      const propertyId = Number(ecm.property_id || savingForm.property_id);
+      const utilityType = savingForm.utility_type || ecm.utility_type;
+      const property = properties.find((item) => item.id === propertyId);
+      const unitCost = savingForm.unit_cost_eur_per_kwh || utilityCost(property, utilityType);
       const costSaving = Number(savingForm.energy_saving_kwh || 0) * Number(unitCost || 0);
       const id = upsertImplementedSaving(db, {
         ...savingForm,
-        property_id: Number(savingForm.property_id),
-        ecm_id: Number(savingForm.ecm_id),
+        property_id: propertyId,
+        ecm_id: ecm.id,
+        utility_type: utilityType,
         unit_cost_eur_per_kwh: unitCost,
         cost_saving_eur: costSaving
       });
       const saved = getImplementedSavings(db).find((item) => item.id === id);
-      const filename = saved.obsidian_filename || savingFilename({ ...saved, ...ecm });
+      const filename = saved.obsidian_filename || savingFilename({ ...saved, ref: ecm.ref });
       await writeTextIntoFolder(handles.savingNotes, filename, buildSavingMarkdown(saved, ecm, property));
       setSavingObsidianFilename(db, id, filename);
       setSavingForm(defaultSavingForm());
       await persist("Implemented saving saved to database and Obsidian.");
+    } catch (error) {
+      notify(error.message || String(error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeImplementedSaving(id) {
+    const saving = data.implementedSavings.find((item) => item.id === Number(id));
+    if (!saving || !window.confirm("Delete this implemented saving from the database and remove its Obsidian note if available?")) return;
+    setBusy(true);
+    try {
+      deleteImplementedSaving(db, saving.id);
+      if (saving.obsidian_filename && handles.savingNotes && await ensurePermission(handles.savingNotes, "readwrite")) {
+        try {
+          await handles.savingNotes.removeEntry(saving.obsidian_filename);
+        } catch (error) {
+          if (error?.name !== "NotFoundError") throw error;
+        }
+      }
+      setSavingForm(defaultSavingForm());
+      await persist("Implemented saving deleted.");
     } catch (error) {
       notify(error.message || String(error));
     } finally {
@@ -872,11 +899,12 @@ export default function App() {
           <SavingsView
             ready={ready}
             properties={properties}
-            implementedEcms={implementedEcms}
+            ecms={data?.ecms || []}
             savings={data?.implementedSavings || []}
             form={savingForm}
             setForm={setSavingForm}
             save={saveImplementedSaving}
+            remove={removeImplementedSaving}
             busy={busy}
           />
         )}
@@ -1366,27 +1394,59 @@ function EcmView(props) {
   );
 }
 
-function SavingsView({ ready, properties, implementedEcms, savings, form, setForm, save, busy }) {
+function SavingsView({ ready, properties, ecms, savings, form, setForm, save, remove, busy }) {
   if (!ready) return <EmptyState />;
-  const selectedEcm = implementedEcms.find((ecm) => ecm.id === Number(form.ecm_id));
-  const selectedProperty = properties.find((property) => property.id === Number(form.property_id)) || properties.find((property) => property.id === selectedEcm?.property_id);
+  const selectedEcm = ecms.find((ecm) => ecm.id === Number(form.ecm_id));
+  const selectedPropertyId = Number(form.property_id || selectedEcm?.property_id || properties[0]?.id || "");
+  const selectedProperty = properties.find((property) => property.id === selectedPropertyId) || properties.find((property) => property.id === selectedEcm?.property_id);
+  const availableEcms = ecms.filter((ecm) => (
+    (!selectedPropertyId || ecm.property_id === selectedPropertyId)
+    && (ecm.status === "Implemented" || ecm.id === Number(form.ecm_id))
+  ));
   const unitCost = form.unit_cost_eur_per_kwh || utilityCost(selectedProperty, form.utility_type);
   const costSaving = Number(form.energy_saving_kwh || 0) * Number(unitCost || 0);
   const set = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
+  const editSaving = (saving) => {
+    setForm({
+      ...saving,
+      id: saving.id,
+      property_id: String(saving.property_id || ""),
+      ecm_id: String(saving.ecm_id || ""),
+      energy_saving_kwh: saving.energy_saving_kwh ?? "",
+      unit_cost_eur_per_kwh: saving.unit_cost_eur_per_kwh ?? "",
+      cost_saving_eur: saving.cost_saving_eur ?? "",
+      notes: saving.notes || ""
+    });
+  };
+  const resetForm = () => setForm(defaultSavingForm());
   return (
     <section className="section">
       <h3>Implemented Savings</h3>
       <div className="grid two">
         <div className="card">
           <form onSubmit={save}>
+            <Field label="Property">
+              <select value={selectedPropertyId || ""} onChange={(e) => {
+                const nextPropertyId = e.target.value;
+                const currentEcm = ecms.find((item) => item.id === Number(form.ecm_id));
+                setForm((prev) => ({
+                  ...prev,
+                  property_id: nextPropertyId,
+                  ecm_id: currentEcm?.property_id === Number(nextPropertyId) ? prev.ecm_id : ""
+                }));
+              }}>
+                {properties.map((property) => <option key={property.id} value={property.id}>{property.name}</option>)}
+              </select>
+            </Field>
             <Field label="Implemented ECM">
               <select value={form.ecm_id} onChange={(e) => {
-                const ecm = implementedEcms.find((item) => item.id === Number(e.target.value));
+                const ecm = ecms.find((item) => item.id === Number(e.target.value));
                 setForm((prev) => ({ ...prev, ecm_id: e.target.value, property_id: ecm?.property_id || prev.property_id, utility_type: ecm?.utility_type || prev.utility_type }));
               }} required>
                 <option value="">Select ECM...</option>
-                {implementedEcms.map((ecm) => <option key={ecm.id} value={ecm.id}>{ecm.property_name} - {ecm.ref} - {ecm.title}</option>)}
+                {availableEcms.map((ecm) => <option key={ecm.id} value={ecm.id}>{ecm.ref} - {ecm.title}{ecm.status !== "Implemented" ? ` (${ecm.status})` : ""}</option>)}
               </select>
+              {selectedEcm ? <p className="field-help">Linked to {selectedEcm.property_name} / {selectedEcm.ref}. The saving record will use this ECM relationship.</p> : null}
             </Field>
             <div className="grid two">
               <Field label="Start date"><input type="date" value={form.start_date} onChange={(e) => set("start_date", e.target.value)} required /></Field>
@@ -1399,21 +1459,33 @@ function SavingsView({ ready, properties, implementedEcms, savings, form, setFor
             </div>
             <p className="pill">Calculated saving EUR {money(costSaving)}</p>
             <Field label="Measurement notes"><textarea value={form.notes} onChange={(e) => set("notes", e.target.value)} /></Field>
-            <button className="btn primary" disabled={busy}>{busy ? "Saving..." : "Save Implemented Saving"}</button>
+            <div className="toolbar">
+              <button className="btn primary" disabled={busy}>{busy ? "Saving..." : form.id ? "Update Implemented Saving" : "Save Implemented Saving"}</button>
+              <button type="button" className="btn" onClick={resetForm}>New Saving</button>
+              <button type="button" className="btn danger" disabled={!form.id || busy} onClick={() => remove(form.id)}>Delete Saving</button>
+            </div>
           </form>
         </div>
         <div className="card" style={{ overflow: "auto", maxHeight: 620 }}>
           <table>
-            <thead><tr><th>Property</th><th>ECM</th><th>Period</th><th>Saving</th></tr></thead>
+            <thead><tr><th>Property</th><th>ECM</th><th>Period</th><th>Energy</th><th>Saving</th><th>Actions</th></tr></thead>
             <tbody>
               {savings.map((saving) => (
                 <tr key={saving.id}>
                   <td>{saving.property_name}</td>
-                  <td>{saving.ref}</td>
+                  <td>{saving.ref} - {saving.ecm_title}</td>
                   <td>{saving.start_date} to {saving.end_date}</td>
+                  <td>{kwh(saving.energy_saving_kwh)} kWh</td>
                   <td>EUR {money(saving.cost_saving_eur)}</td>
+                  <td>
+                    <div className="toolbar table-actions">
+                      <button type="button" className="btn" onClick={() => editSaving(saving)}>Edit</button>
+                      <button type="button" className="btn danger" disabled={busy} onClick={() => remove(saving.id)}>Delete</button>
+                    </div>
+                  </td>
                 </tr>
               ))}
+              {!savings.length ? <tr><td colSpan="6" className="muted">No implemented savings recorded yet.</td></tr> : null}
             </tbody>
           </table>
         </div>
@@ -2788,7 +2860,7 @@ function EmptyState() {
 }
 
 function defaultSavingForm() {
-  return { ecm_id: "", property_id: "", utility_type: "electricity", start_date: todayIso(), end_date: todayIso(), energy_saving_kwh: "", unit_cost_eur_per_kwh: "", notes: "" };
+  return { id: "", ecm_id: "", property_id: "", utility_type: "electricity", start_date: todayIso(), end_date: todayIso(), energy_saving_kwh: "", unit_cost_eur_per_kwh: "", notes: "" };
 }
 
 function defaultUsageForm() {

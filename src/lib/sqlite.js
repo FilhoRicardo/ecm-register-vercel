@@ -448,6 +448,10 @@ export function setSavingObsidianFilename(db, id, filename) {
   db.run("UPDATE ecm_measured_savings SET obsidian_filename=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", [filename, id]);
 }
 
+export function deleteImplementedSaving(db, id) {
+  db.run("DELETE FROM ecm_measured_savings WHERE id = ?", [id]);
+}
+
 export function runSelect(db, sql) {
   if (!/^\s*select\b/i.test(sql)) throw new Error("Only SELECT queries are allowed.");
   return rows(db, sql);

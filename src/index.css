@@ -342,6 +342,14 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
 .kpi .label { color: #64748b; font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.06em; }
 .kpi .value { color: #c4b5fd; font-size: 26px; font-weight: 900; margin-top: 7px; overflow-wrap: anywhere; }
 .toolbar { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; margin: 14px 0; }
+.toolbar.table-actions {
+  margin: 0;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+.toolbar.table-actions .btn {
+  padding: 6px 8px;
+}
 .btn {
   border: 1px solid rgba(255,255,255,0.09);
   color: #dbeafe;

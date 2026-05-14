@@ -152,6 +152,7 @@ export function buildMeetingMarkdown({ property, reportMonth, performance, openE
     : "| | No open ECMs | | | | |";
 
   return `---
+record_type: monthly_meeting
 date created: ${new Date().toISOString().slice(0, 19).replace("T", " ")}
 project: Project - Union Module 4
 property: ${property?.name || ""}

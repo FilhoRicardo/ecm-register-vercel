@@ -384,6 +384,50 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
   background: linear-gradient(135deg, rgba(109,40,217,0.88), rgba(37,99,235,0.76));
   border-color: rgba(167,139,250,0.42);
 }
+.compact-tabs {
+  margin-top: 4px;
+}
+.meeting-edit-grid {
+  align-items: stretch;
+}
+.meeting-picker-card,
+.meeting-editor-card {
+  min-height: 0;
+}
+.meeting-textarea {
+  min-height: clamp(260px, 42vh, 520px);
+}
+.meeting-context {
+  border: 1px solid rgba(124,58,237,0.22);
+  background: rgba(124,58,237,0.07);
+  border-radius: 8px;
+  padding: 11px 12px;
+  margin-top: 10px;
+}
+.meeting-context strong {
+  display: block;
+  color: #f8fafc;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.meeting-context span {
+  display: block;
+  margin-top: 10px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.meeting-context p {
+  max-height: 220px;
+  overflow: auto;
+  margin: 6px 0 0;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
 .field { display: grid; gap: 5px; margin-bottom: 11px; }
 .field label { font-size: 10px; text-transform: uppercase; font-weight: 900; color: #64748b; letter-spacing: 0.08em; }
 .field-help {

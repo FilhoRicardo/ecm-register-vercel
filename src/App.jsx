@@ -654,12 +654,27 @@ export default function App() {
       return [];
     }
     setFolderStatuses((prev) => ({ ...prev, meetingNotes: "granted" }));
-    const files = await listMarkdownFiles(handles.meetingNotes);
+    const files = (await listMarkdownFiles(handles.meetingNotes))
+      .filter((file) => (
+        file.name.includes("_Monthly_ECM_Meeting")
+        || file.text.includes("record_type: monthly_meeting")
+        || (file.text.includes("# ") && file.text.includes("Monthly ECM Meeting"))
+      ))
+      .sort((a, b) => b.name.localeCompare(a.name));
     setMeetingFiles(files);
+    if (selectedMeetingName) {
+      const selected = files.find((item) => item.name === selectedMeetingName);
+      if (selected) setMeetingDraft(extractMeetingSections(selected.text || ""));
+    }
     return files;
   }
 
   function selectMeeting(name) {
+    if (!name) {
+      setSelectedMeetingName("");
+      setMeetingDraft({ pre: "", post: "" });
+      return;
+    }
     const file = meetingFiles.find((item) => item.name === name);
     setSelectedMeetingName(name);
     setMeetingDraft(extractMeetingSections(file?.text || ""));
@@ -668,8 +683,13 @@ export default function App() {
   async function saveMeetingDraft() {
     const file = meetingFiles.find((item) => item.name === selectedMeetingName);
     if (!file) return;
-    await writeFile(file.handle, replaceMeetingSections(file.text, meetingDraft));
+    const latest = await file.handle.getFile();
+    const latestText = await latest.text();
+    const currentSections = extractMeetingSections(latestText);
+    const updated = replaceMeetingSections(latestText, { ...currentSections, post: meetingDraft.post || "" });
+    await writeFile(file.handle, updated);
     await loadMeetingFiles();
+    setMeetingDraft(extractMeetingSections(updated));
     notify("Meeting note updated in Obsidian.");
   }
 
@@ -1627,41 +1647,83 @@ function CrremView({ ready, properties, selectedPropertyId, setSelectedPropertyI
 }
 
 function MeetingsView({ ready, properties, form, setForm, save, loadMeetingFiles, meetingFiles, selectedMeetingName, selectMeeting, meetingDraft, setMeetingDraft, saveMeetingDraft }) {
+  const [mode, setMode] = useState("new");
+  const [loadedOnce, setLoadedOnce] = useState(false);
+  useEffect(() => {
+    if (!ready || mode !== "existing" || loadedOnce) return;
+    setLoadedOnce(true);
+    loadMeetingFiles();
+  }, [ready, mode, loadedOnce, loadMeetingFiles]);
   if (!ready) return <EmptyState />;
   const set = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
+  const selectedFile = meetingFiles.find((file) => file.name === selectedMeetingName);
   return (
     <section className="section">
-      <h3>Monthly Meeting Notes</h3>
-      <div className="grid two meeting-notes-grid">
-      <div className="card meeting-note-card">
-        <form className="meeting-note-form" onSubmit={save}>
-          <div className="grid three">
-            <Field label="Property"><select value={form.property_id} onChange={(e) => set("property_id", e.target.value)}>{properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
-            <Field label="Report month"><input type="month" value={form.report_month} onChange={(e) => set("report_month", e.target.value)} /></Field>
-            <Field label="Meeting date"><input type="date" value={form.meeting_date} onChange={(e) => set("meeting_date", e.target.value)} /></Field>
-          </div>
-          <Field label="Comments pre meeting" className="meeting-note-field"><textarea className="meeting-note-textarea" value={form.pre} onChange={(e) => set("pre", e.target.value)} /></Field>
-          <button className="btn primary">Save Meeting Note to Obsidian</button>
-        </form>
-      </div>
-      <div className="card meeting-note-card">
-        <div className="meeting-note-controls">
-          <button className="btn" type="button" onClick={loadMeetingFiles}>Load Existing Notes</button>
-          <select className="input" value={selectedMeetingName} onChange={(e) => selectMeeting(e.target.value)}>
-            <option value="">Select note...</option>
-            {meetingFiles.map((file) => <option key={file.name} value={file.name}>{file.name}</option>)}
-          </select>
+      <div className="section-head">
+        <div>
+          <h3>Monthly Meeting Notes</h3>
+          <p className="muted">Create the pre-meeting pack, then come back after the meeting to update only the post-meeting comments.</p>
         </div>
-        <Field label="Existing note - comments post meeting" className="meeting-note-field">
-          <textarea
-            className="meeting-note-textarea"
-            value={meetingDraft.post || ""}
-            onChange={(e) => setMeetingDraft((prev) => ({ ...prev, post: e.target.value }))}
-          />
-        </Field>
-        <button className="btn primary" type="button" disabled={!selectedMeetingName} onClick={saveMeetingDraft}>Save Existing Note</button>
+        <button className="btn" type="button" onClick={loadMeetingFiles}>Refresh Notes</button>
       </div>
+      <div className="tabs compact-tabs">
+        <button className={mode === "new" ? "active" : ""} type="button" onClick={() => setMode("new")}>New Note</button>
+        <button className={mode === "existing" ? "active" : ""} type="button" onClick={() => setMode("existing")}>Update Existing</button>
       </div>
+      {mode === "new" ? (
+        <div className="card meeting-editor-card">
+          <form onSubmit={save}>
+            <div className="grid three">
+              <Field label="Property"><select value={form.property_id} onChange={(e) => set("property_id", e.target.value)}>{properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
+              <Field label="Report month"><input type="month" value={form.report_month} onChange={(e) => set("report_month", e.target.value)} /></Field>
+              <Field label="Meeting date"><input type="date" value={form.meeting_date} onChange={(e) => set("meeting_date", e.target.value)} /></Field>
+            </div>
+            <Field label="Comments pre meeting" help="These comments are written into the new Obsidian note. Existing post-meeting comments are preserved if the note already exists.">
+              <textarea className="meeting-textarea" value={form.pre} onChange={(e) => set("pre", e.target.value)} />
+            </Field>
+            <div className="toolbar">
+              <button className="btn primary">Create / Update Meeting Note</button>
+            </div>
+          </form>
+        </div>
+      ) : (
+        <div className="grid two meeting-edit-grid">
+          <div className="card meeting-picker-card">
+            <div className="section-head">
+              <div>
+                <h3>Existing Notes</h3>
+                <p className="muted">{meetingFiles.length ? `${meetingFiles.length} monthly notes loaded.` : "Click Refresh Notes to read the meeting folder."}</p>
+              </div>
+            </div>
+            <Field label="Meeting note">
+              <select className="input" value={selectedMeetingName} onChange={(e) => selectMeeting(e.target.value)}>
+                <option value="">Select note...</option>
+                {meetingFiles.map((file) => <option key={file.name} value={file.name}>{file.name}</option>)}
+              </select>
+            </Field>
+            {selectedFile ? (
+              <div className="meeting-context">
+                <strong>{selectedFile.name}</strong>
+                <span>Pre-meeting context</span>
+                <p>{meetingDraft.pre || "No pre-meeting comments found in this note."}</p>
+              </div>
+            ) : null}
+          </div>
+          <div className="card meeting-editor-card">
+            <Field label="Comments post meeting" help="Only this section is saved back to the selected Obsidian note.">
+              <textarea
+                className="meeting-textarea"
+                value={meetingDraft.post || ""}
+                onChange={(e) => setMeetingDraft((prev) => ({ ...prev, post: e.target.value }))}
+                disabled={!selectedMeetingName}
+              />
+            </Field>
+            <div className="toolbar">
+              <button className="btn primary" type="button" disabled={!selectedMeetingName} onClick={saveMeetingDraft}>Save Post-Meeting Comments</button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

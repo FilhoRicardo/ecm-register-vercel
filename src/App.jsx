@@ -59,7 +59,6 @@ const FOLDERS = [
 ];
 
 const NAV = [
-  ["benchmark", "\u{1F3C1} Benchmark"],
   ["welcome", "👋 Welcome"],
   ["setup", "⚙️ Setup"],
   ["dashboard", "🎯 Dashboard"],
@@ -72,6 +71,7 @@ const NAV = [
   ["crrem", "🌍 CRREM Plot"],
   ["meetings", "📝 Monthly Meetings"],
   ["reports", "📤 Reports"],
+  ["benchmark", "\u{1F3C1} Benchmark"],
   ["database", "🧪 SQLite Lab"],
   ["admin", "🛡️ Database Admin"]
 ];
@@ -1664,8 +1664,8 @@ function BenchmarkView({ ready, properties, selectedPropertyId, setSelectedPrope
           <p className="muted">REEB office benchmark view using landlord / whole-building monthly consumption.</p>
         </div>
       </div>
-      <div className="card data-controls">
-        <div className="grid three">
+      <div className="card data-controls benchmark-controls">
+        <div className="benchmark-control-grid">
           <Field label="Property">
             <select value={property?.id || ""} onChange={(e) => setSelectedPropertyId(e.target.value)}>
               {properties.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
@@ -1702,6 +1702,16 @@ function BenchmarkView({ ready, properties, selectedPropertyId, setSelectedPrope
                 This page compares the selected property against the office benchmark figures from your REEB reference screenshot.
                 Benchmarks are whole-building values and should only be used where offices represent more than 75% of the reporting area.
               </p>
+              <div className="benchmark-definition-grid">
+                <div>
+                  <strong>Electricity equivalent</strong>
+                  <span>Converts each fuel to an electricity-equivalent basis using REEB factors, then divides by NLA.</span>
+                </div>
+                <div>
+                  <strong>Total energy</strong>
+                  <span>Adds electricity, heating and cooling kWh directly, then divides by GIA. No conversion factor is applied.</span>
+                </div>
+              </div>
               <table className="benchmark-factor-table">
                 <thead><tr><th>Carrier</th><th>Electricity equivalent factor</th></tr></thead>
                 <tbody>

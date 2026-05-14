@@ -490,6 +490,22 @@ select option {
 .data-controls {
   padding-bottom: 4px;
 }
+.benchmark-controls {
+  padding-bottom: 10px;
+}
+.benchmark-control-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+.benchmark-control-grid .field {
+  margin-bottom: 0;
+}
+.benchmark-control-grid select,
+.benchmark-control-grid input {
+  height: 49px;
+}
 .data-kpis {
   margin-bottom: 14px;
 }
@@ -516,6 +532,29 @@ select option {
 .benchmark-factor-table th,
 .benchmark-factor-table td {
   padding: 7px 8px;
+}
+.benchmark-definition-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  margin: 12px 0;
+}
+.benchmark-definition-grid div {
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.025);
+  padding: 10px;
+}
+.benchmark-definition-grid strong {
+  display: block;
+  color: #e2e8f0;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.benchmark-definition-grid span {
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.4;
 }
 .benchmark-note {
   display: grid;
@@ -807,6 +846,8 @@ tr:hover td { background: rgba(124,58,237,0.055); }
   .welcome-grid { grid-template-columns: 1fr; }
   .data-view-grid,
   .benchmark-grid { grid-template-columns: 1fr; }
+  .benchmark-control-grid,
+  .benchmark-definition-grid { grid-template-columns: 1fr; }
   .grid.two, .grid.three, .grid.four { grid-template-columns: 1fr; }
   .formula-grid { grid-template-columns: 1fr; }
   .meeting-note-card { min-height: auto; }

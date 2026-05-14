@@ -1644,7 +1644,10 @@ function BenchmarkView({ ready, properties, selectedPropertyId, setSelectedPrope
   const selectedId = Number(selectedPropertyId) || properties[0]?.id || "";
   const property = properties.find((item) => item.id === Number(selectedId)) || properties[0] || null;
   const availableYears = useMemo(() => benchmarkYears(monthlyUsage, property?.id), [monthlyUsage, property?.id]);
+  const availableMonths = useMemo(() => benchmarkMonths(monthlyUsage, property?.id), [monthlyUsage, property?.id]);
   const [year, setYear] = useState("");
+  const [periodMode, setPeriodMode] = useState("calendar");
+  const [rollingEndMonth, setRollingEndMonth] = useState("");
   const [nlaOverride, setNlaOverride] = useState("");
 
   useEffect(() => {
@@ -1652,9 +1655,23 @@ function BenchmarkView({ ready, properties, selectedPropertyId, setSelectedPrope
     setYear((prev) => availableYears.includes(prev) ? prev : availableYears[0]);
   }, [availableYears]);
 
+  useEffect(() => {
+    if (!availableMonths.length) return;
+    setRollingEndMonth((prev) => availableMonths.includes(prev) ? prev : availableMonths[0]);
+  }, [availableMonths]);
+
   if (!ready) return <EmptyState />;
-  const analysis = buildBenchmarkAnalysis({ property, monthlyUsage, year: year || availableYears[0], nlaOverride });
+  const analysis = buildBenchmarkAnalysis({
+    property,
+    properties,
+    monthlyUsage,
+    periodMode,
+    year: year || availableYears[0],
+    rollingEndMonth: rollingEndMonth || availableMonths[0],
+    nlaOverride
+  });
   const currentYear = year || availableYears[0] || String(new Date().getFullYear());
+  const currentRollingEnd = rollingEndMonth || availableMonths[0] || todayIso().slice(0, 7);
 
   return (
     <section className="section benchmark-section">
@@ -1671,11 +1688,23 @@ function BenchmarkView({ ready, properties, selectedPropertyId, setSelectedPrope
               {properties.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
           </Field>
-          <Field label="Benchmark year" help="The page uses full or partial landlord usage records for this calendar year.">
-            <select value={currentYear} onChange={(e) => setYear(e.target.value)}>
-              {availableYears.length ? availableYears.map((item) => <option key={item} value={item}>{item}</option>) : <option value={currentYear}>{currentYear}</option>}
+          <Field label="Period" help="Calendar year is useful for annual reporting. Rolling 12 months is better for current performance.">
+            <select value={periodMode} onChange={(e) => setPeriodMode(e.target.value)}>
+              <option value="calendar">Calendar year</option>
+              <option value="rolling_12">Rolling 12 months</option>
             </select>
           </Field>
+          {periodMode === "rolling_12" ? (
+            <Field label="Rolling end month" help="The page uses this month plus the previous 11 months.">
+              <input type="month" value={currentRollingEnd} onChange={(e) => setRollingEndMonth(e.target.value)} />
+            </Field>
+          ) : (
+            <Field label="Benchmark year" help="The page uses full or partial landlord usage records for this calendar year.">
+              <select value={currentYear} onChange={(e) => setYear(e.target.value)}>
+                {availableYears.length ? availableYears.map((item) => <option key={item} value={item}>{item}</option>) : <option value={currentYear}>{currentYear}</option>}
+              </select>
+            </Field>
+          )}
           <Field label="NLA override m2" help="REEB electricity-equivalent benchmark uses NLA. If blank, the app uses the property floor area as a temporary proxy.">
             <input type="number" min="0" step="0.01" value={nlaOverride} onChange={(e) => setNlaOverride(e.target.value)} placeholder={analysis.gia ? String(analysis.gia) : "Enter NLA"} />
           </Field>
@@ -1711,6 +1740,10 @@ function BenchmarkView({ ready, properties, selectedPropertyId, setSelectedPrope
                   <strong>Total energy</strong>
                   <span>Adds electricity, heating and cooling kWh directly, then divides by GIA. No conversion factor is applied.</span>
                 </div>
+                <div>
+                  <strong>Portfolio average</strong>
+                  <span>Weighted average for all properties with usage in the same period: total portfolio kWh divided by total portfolio area.</span>
+                </div>
               </div>
               <table className="benchmark-factor-table">
                 <thead><tr><th>Carrier</th><th>Electricity equivalent factor</th></tr></thead>
@@ -1737,12 +1770,13 @@ function BenchmarkView({ ready, properties, selectedPropertyId, setSelectedPrope
               <h3>Inputs Used</h3>
               <table>
                 <tbody>
-                  <tr><th>Year</th><td>{analysis.year}</td></tr>
+                  <tr><th>Period</th><td>{analysis.periodLabel}</td></tr>
                   <tr><th>GIA</th><td>{formatBenchmarkNumber(analysis.gia)} m2</td></tr>
                   <tr><th>NLA</th><td>{formatBenchmarkNumber(analysis.nla)} m2</td></tr>
                   <tr><th>Electricity</th><td>{kwh(analysis.usage.electricity_kwh)} kWh</td></tr>
                   <tr><th>Heating</th><td>{kwh(analysis.usage.heating_kwh)} kWh - factor {formatBenchmarkNumber(analysis.heatingFactor)}</td></tr>
                   <tr><th>Cooling</th><td>{kwh(analysis.usage.cooling_kwh)} kWh - factor {formatBenchmarkNumber(analysis.coolingFactor)}</td></tr>
+                  <tr><th>Portfolio properties</th><td>{analysis.portfolio?.propertyCount || 0}</td></tr>
                 </tbody>
               </table>
             </div>
@@ -2207,13 +2241,14 @@ function DataHealthTable({ years, health }) {
 
 function BenchmarkComparisonChart({ analysis }) {
   const width = 820;
-  const height = 340;
+  const height = 390;
   const pad = { left: 205, right: 26, top: 24, bottom: 42 };
   const rows = [
     {
       key: "electricityEquivalent",
       label: "Electricity equivalent",
       asset: analysis.electricityEquivalentIntensity,
+      portfolio: analysis.portfolio?.electricityEquivalentIntensity,
       good: REEB_OFFICE_BENCHMARKS.electricityEquivalent.good,
       typical: REEB_OFFICE_BENCHMARKS.electricityEquivalent.typical
     },
@@ -2221,15 +2256,18 @@ function BenchmarkComparisonChart({ analysis }) {
       key: "totalEnergy",
       label: "Total energy",
       asset: analysis.totalEnergyIntensity,
+      portfolio: analysis.portfolio?.totalEnergyIntensity,
       good: REEB_OFFICE_BENCHMARKS.totalEnergy.good,
       typical: REEB_OFFICE_BENCHMARKS.totalEnergy.typical
     }
   ];
-  const maxValue = Math.max(...rows.flatMap((row) => [row.asset, row.good, row.typical]), 1) * 1.18;
+  const values = rows.flatMap((row) => [row.asset, row.portfolio, row.good, row.typical]).filter((value) => Number.isFinite(Number(value)));
+  const maxValue = Math.max(...values, 1) * 1.18;
   const chartW = width - pad.left - pad.right;
   const x = (value) => pad.left + (Number(value || 0) / maxValue) * chartW;
   const groups = [
     { key: "asset", label: "Asset", className: "asset" },
+    { key: "portfolio", label: "Portfolio avg", className: "portfolio" },
     { key: "good", label: "Good practice", className: "good" },
     { key: "typical", label: "Typical", className: "typical" }
   ];
@@ -2248,13 +2286,14 @@ function BenchmarkComparisonChart({ analysis }) {
         );
       })}
       {rows.map((row, rowIndex) => {
-        const baseY = pad.top + 46 + rowIndex * 124;
+        const baseY = pad.top + 44 + rowIndex * 158;
         return (
           <g key={row.key}>
             <text x={18} y={baseY + 20} className="benchmark-row-label">{row.label}</text>
             {groups.map((group, groupIndex) => {
               const y = baseY + groupIndex * 26;
               const value = row[group.key];
+              if (!Number.isFinite(Number(value))) return null;
               return (
                 <g key={`${row.key}-${group.key}`}>
                   <text x={pad.left - 12} y={y + 13} className="chart-label" textAnchor="end">{group.label}</text>
@@ -2504,31 +2543,35 @@ function benchmarkYears(rows = [], propertyId) {
   return [...years].sort((a, b) => Number(b) - Number(a));
 }
 
-function buildBenchmarkAnalysis({ property, monthlyUsage = [], year, nlaOverride }) {
+function benchmarkMonths(rows = [], propertyId) {
+  const months = new Set();
+  for (const row of rows || []) {
+    if (propertyId && Number(row.property_id) !== Number(propertyId)) continue;
+    if ((row.scope_type || "building") !== "building") continue;
+    const month = String(row.usage_month || "");
+    if (/^\d{4}-\d{2}$/.test(month)) months.add(month);
+  }
+  return [...months].sort((a, b) => b.localeCompare(a));
+}
+
+function buildBenchmarkAnalysis({ property, properties = [], monthlyUsage = [], periodMode = "calendar", year, rollingEndMonth, nlaOverride }) {
   if (!property) return { ok: false, error: "Select a property first." };
   const gia = Number(property.total_floor_area || 0);
   if (!gia) return { ok: false, error: "This property needs a total floor area before it can be benchmarked." };
   const nla = Number(nlaOverride || 0) || gia;
-  const selectedYear = String(year || "");
-  const rows = (monthlyUsage || []).filter((row) => (
-    Number(row.property_id) === Number(property.id)
-    && (row.scope_type || "building") === "building"
-    && String(row.usage_month || "").startsWith(`${selectedYear}-`)
-  ));
-  if (!selectedYear || !rows.length) return { ok: false, error: "No landlord / whole-building usage was found for the selected year." };
-  const usage = rows.reduce((sum, row) => ({
-    electricity_kwh: sum.electricity_kwh + Number(row.electricity_kwh || 0),
-    heating_kwh: sum.heating_kwh + Number(row.heating_kwh || 0),
-    cooling_kwh: sum.cooling_kwh + Number(row.cooling_kwh || 0)
-  }), { electricity_kwh: 0, heating_kwh: 0, cooling_kwh: 0 });
-  const months = new Set(rows.filter((row) => (
-    Number(row.electricity_kwh || 0) > 0 || Number(row.heating_kwh || 0) > 0 || Number(row.cooling_kwh || 0) > 0
-  )).map((row) => String(row.usage_month || "").slice(5, 7)));
+  const period = benchmarkPeriod(periodMode, year, rollingEndMonth);
+  if (!period.ok) return { ok: false, error: period.error };
+  const rows = benchmarkRowsForPeriod(monthlyUsage, property.id, period);
+  if (!rows.length) return { ok: false, error: "No landlord / whole-building usage was found for the selected period." };
+  const usage = sumBenchmarkUsage(rows);
+  const months = benchmarkPresentMonths(rows);
   const heatingFactorInfo = reebFactorForCarrier(property.heating_carrier, "heating");
   const coolingFactorInfo = reebFactorForCarrier(property.cooling_carrier, "cooling");
+  const portfolio = buildPortfolioBenchmark({ properties, monthlyUsage, period });
   const warnings = [];
   if (!nlaOverride) warnings.push("NLA is currently defaulting to the stored property floor area. Enter an NLA override if you have the REEB reporting area.");
-  if (months.size < 12) warnings.push(`Only ${months.size}/12 months have usage values for ${selectedYear}. Benchmark intensity may be understated.`);
+  if (months.size < 12) warnings.push(`Only ${months.size}/12 months have usage values for ${period.label}. Benchmark intensity may be understated.`);
+  if (!portfolio) warnings.push("Portfolio average is not available because no properties have floor area and usage for this period.");
   if (heatingFactorInfo.warning) warnings.push(heatingFactorInfo.warning);
   if (coolingFactorInfo.warning) warnings.push(coolingFactorInfo.warning);
   const totalEnergyKwh = usage.electricity_kwh + usage.heating_kwh + usage.cooling_kwh;
@@ -2537,11 +2580,12 @@ function buildBenchmarkAnalysis({ property, monthlyUsage = [], year, nlaOverride
     + usage.cooling_kwh * coolingFactorInfo.factor;
   return {
     ok: true,
-    year: selectedYear,
+    periodLabel: period.label,
     gia,
     nla,
     usage,
     monthsPresent: months.size,
+    portfolio,
     heatingFactor: heatingFactorInfo.factor,
     coolingFactor: coolingFactorInfo.factor,
     totalEnergyKwh,
@@ -2549,6 +2593,71 @@ function buildBenchmarkAnalysis({ property, monthlyUsage = [], year, nlaOverride
     totalEnergyIntensity: totalEnergyKwh / gia,
     electricityEquivalentIntensity: electricityEquivalentKwh / nla,
     warnings
+  };
+}
+
+function benchmarkPeriod(periodMode, year, rollingEndMonth) {
+  if (periodMode === "rolling_12") {
+    const endMonth = String(rollingEndMonth || "");
+    if (!/^\d{4}-\d{2}$/.test(endMonth)) return { ok: false, error: "Select a valid rolling end month." };
+    const months = monthRange(endMonth, 11);
+    return { ok: true, mode: "rolling_12", months, label: `${months[0]} to ${months[11]}` };
+  }
+  const selectedYear = String(year || "");
+  if (!/^\d{4}$/.test(selectedYear)) return { ok: false, error: "Select a valid benchmark year." };
+  return { ok: true, mode: "calendar", year: selectedYear, label: selectedYear };
+}
+
+function benchmarkRowsForPeriod(rows = [], propertyId, period) {
+  return (rows || []).filter((row) => {
+    if (Number(row.property_id) !== Number(propertyId)) return false;
+    if ((row.scope_type || "building") !== "building") return false;
+    const month = String(row.usage_month || "");
+    if (period.mode === "rolling_12") return period.months.includes(month);
+    return month.startsWith(`${period.year}-`);
+  });
+}
+
+function sumBenchmarkUsage(rows = []) {
+  return rows.reduce((sum, row) => ({
+    electricity_kwh: sum.electricity_kwh + Number(row.electricity_kwh || 0),
+    heating_kwh: sum.heating_kwh + Number(row.heating_kwh || 0),
+    cooling_kwh: sum.cooling_kwh + Number(row.cooling_kwh || 0)
+  }), { electricity_kwh: 0, heating_kwh: 0, cooling_kwh: 0 });
+}
+
+function benchmarkPresentMonths(rows = []) {
+  return new Set(rows.filter((row) => (
+    Number(row.electricity_kwh || 0) > 0 || Number(row.heating_kwh || 0) > 0 || Number(row.cooling_kwh || 0) > 0
+  )).map((row) => String(row.usage_month || "").slice(0, 7)));
+}
+
+function buildPortfolioBenchmark({ properties = [], monthlyUsage = [], period }) {
+  let gia = 0;
+  let nla = 0;
+  let totalEnergyKwh = 0;
+  let electricityEquivalentKwh = 0;
+  let propertyCount = 0;
+  for (const property of properties || []) {
+    const area = Number(property.total_floor_area || 0);
+    if (!area) continue;
+    const rows = benchmarkRowsForPeriod(monthlyUsage, property.id, period);
+    if (!rows.length) continue;
+    const usage = sumBenchmarkUsage(rows);
+    if (usage.electricity_kwh <= 0 && usage.heating_kwh <= 0 && usage.cooling_kwh <= 0) continue;
+    const heatingFactor = reebFactorForCarrier(property.heating_carrier, "heating").factor;
+    const coolingFactor = reebFactorForCarrier(property.cooling_carrier, "cooling").factor;
+    gia += area;
+    nla += area;
+    totalEnergyKwh += usage.electricity_kwh + usage.heating_kwh + usage.cooling_kwh;
+    electricityEquivalentKwh += usage.electricity_kwh + usage.heating_kwh * heatingFactor + usage.cooling_kwh * coolingFactor;
+    propertyCount += 1;
+  }
+  if (!propertyCount || !gia || !nla) return null;
+  return {
+    propertyCount,
+    totalEnergyIntensity: totalEnergyKwh / gia,
+    electricityEquivalentIntensity: electricityEquivalentKwh / nla
   };
 }
 

@@ -495,7 +495,7 @@ select option {
 }
 .benchmark-control-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
   align-items: start;
 }
@@ -594,6 +594,7 @@ select option {
   font-weight: 900;
 }
 .benchmark-bar.asset { fill: rgba(96,165,250,0.78); }
+.benchmark-bar.portfolio { fill: rgba(34,211,238,0.74); }
 .benchmark-bar.good { fill: rgba(34,197,94,0.72); }
 .benchmark-bar.typical { fill: rgba(249,115,22,0.76); }
 .benchmark-status {

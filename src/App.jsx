@@ -29,10 +29,10 @@ import {
   upsertProperty,
   upsertTenant
 } from "./lib/sqlite.js";
-import { downloadBlob, ensurePermission, idbGet, idbSet, permissionState, supportsFileSystemAccess, writeFile } from "./lib/storage.js";
+import { downloadBlob, ensurePermission, idbDel, idbGet, idbSet, permissionState, supportsFileSystemAccess, writeFile } from "./lib/storage.js";
 import { listMarkdownFiles, routeCalculationFile, writeTextIntoFolder } from "./lib/files.js";
 import { buildEcmMarkdown, buildMeetingMarkdown, buildSavingMarkdown, ecmFilename, extractMeetingSections, meetingFilename, replaceMeetingSections, savingFilename } from "./lib/markdown.js";
-import { downloadCrremPdfReport, downloadEcmReviewWorkbook, downloadExcelRegister, downloadPptxRegister, downloadUsageWorkbook, parseEcmReviewWorkbook } from "./lib/reports.js";
+import { downloadCrremPdfReport, downloadEcmReviewWorkbook, downloadExcelRegister, downloadPptxRegister, downloadUsageCsv, downloadUsageWorkbook, parseEcmReviewWorkbook } from "./lib/reports.js";
 import { EQUIPMENT_TYPE_TO_BRICK_CLASS, kwh, money, todayIso, utilityCost } from "./lib/format.js";
 import {
   buildCrremAnalysis,
@@ -49,13 +49,13 @@ import {
 } from "./lib/crrem.js";
 
 const FOLDERS = [
-  { key: "database", label: "Database Folder", required: true },
-  { key: "ecmNotes", label: "ECM Notes Folder", required: true },
-  { key: "savingNotes", label: "Implemented Savings Notes Folder", required: true },
-  { key: "meetingNotes", label: "Monthly Meeting Notes Folder", required: true },
-  { key: "calculationFiles", label: "Calculation Files Folder", required: true },
-  { key: "reports", label: "Reports Folder", required: false },
-  { key: "imports", label: "Imports Folder", required: false }
+  { key: "database", label: "Database", required: true, description: "Where ecm_register.db is stored and backed up" },
+  { key: "ecmNotes", label: "ECM Notes", required: true, description: "Obsidian folder for ECM Markdown files" },
+  { key: "savingNotes", label: "Savings Notes", required: true, description: "Obsidian folder for implemented saving notes" },
+  { key: "meetingNotes", label: "Meeting Notes", required: true, description: "Obsidian folder for monthly meeting notes" },
+  { key: "calculationFiles", label: "Calculations", required: true, description: "Local folder for ECM calculation evidence" },
+  { key: "reports", label: "Reports", required: false, description: "Optional folder for generated reports" },
+  { key: "imports", label: "Imports", required: false, description: "Optional folder for source import files" }
 ];
 
 const NAV = [
@@ -230,6 +230,37 @@ export default function App() {
       setSetupError(error.message || String(error));
       notify("Folder permission restore failed.");
     }
+  }
+
+  async function forgetFolder(key) {
+    await idbDel(`folder_${key}`);
+    setHandles((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setFolderStatuses((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    if (key === "database") {
+      setDb(null);
+      setDbFileHandle(null);
+      setData(null);
+    }
+    notify("Folder assignment cleared.");
+  }
+
+  async function forgetAllFolders() {
+    for (const def of FOLDERS) await idbDel(`folder_${def.key}`);
+    setHandles({});
+    setFolderStatuses({});
+    setDb(null);
+    setDbFileHandle(null);
+    setData(null);
+    setActive("setup");
+    notify("All folder assignments cleared.");
   }
 
   async function openDatabaseFolder(folderHandle, allHandles = handles, options = {}) {
@@ -756,7 +787,8 @@ export default function App() {
             handles={handles}
             folderStatuses={folderStatuses}
             configureFolder={configureFolder}
-            restoreFolderPermission={restoreFolderPermission}
+            forgetFolder={forgetFolder}
+            forgetAllFolders={forgetAllFolders}
             importDatabase={importDatabase}
             loadDatabase={() => openDatabaseFolder(handles.database, handles, { requestAll: true })}
             data={data}
@@ -835,6 +867,7 @@ export default function App() {
             save={saveUsage}
             remove={removeUsage}
             downloadUsage={() => downloadUsageWorkbook(db)}
+            downloadUsageCsv={() => downloadUsageCsv(db)}
           />
         )}
         {active === "crrem" && (
@@ -891,62 +924,68 @@ export default function App() {
   );
 }
 
-function SetupView({ handles, folderStatuses, configureFolder, restoreFolderPermission, importDatabase, loadDatabase, data, setupError, busy, ready }) {
-  const requiredConfigured = FOLDERS.filter((folder) => folder.required).every((folder) => handles[folder.key]);
+function SetupView({ handles, folderStatuses, configureFolder, forgetFolder, forgetAllFolders, importDatabase, loadDatabase, data, setupError, busy, ready }) {
+  const requiredFolders = FOLDERS.filter((folder) => folder.required);
+  const requiredConfigured = requiredFolders.every((folder) => handles[folder.key]);
+  const configuredCount = FOLDERS.filter((folder) => handles[folder.key]).length;
   return (
-    <section className="section">
-      <h3>Folder Setup</h3>
-      <p className="muted">Configure local folders once per browser/device. Folder permissions are stored in the browser, not on Vercel.</p>
-      {setupError ? <div className="card" style={{ borderColor: "rgba(255,95,95,0.45)", color: "#ffd8d8", marginBottom: 14 }}>{setupError}</div> : null}
-      {ready && data ? (
-        <div className="grid four" style={{ marginBottom: 14 }}>
-          <Kpi label="Loaded Properties" value={data.properties.length} />
-          <Kpi label="Loaded ECMs" value={data.ecms.length} />
-          <Kpi label="Monthly Usage Rows" value={data.monthlyUsage.length} />
-          <Kpi label="Implemented Savings" value={data.implementedSavings.length} />
+    <section className="setup-screen">
+      <div className="setup-panel">
+        <div className="setup-title">
+          <div className="setup-icon">⚡</div>
+          <span className="eyebrow">LOCAL WORKSPACE</span>
+          <h3>Connect your folders</h3>
+          <p className="muted">Pick each local folder once per device. The files stay on your machine; the app only remembers browser folder permissions.</p>
         </div>
-      ) : null}
-      <div className="grid two">
-        {FOLDERS.map((folder) => (
-          <div className="card" key={folder.key}>
-            <div className="kpi">
-              <div className="label">{folder.required ? "Required" : "Optional"}</div>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", marginTop: 10 }}>
-                <strong>{folder.label}</strong>
-                <span className="pill">{folderStatusLabel(handles[folder.key], folderStatuses[folder.key])}</span>
-              </div>
-              <p className="muted" style={{ margin: "8px 0 0" }}>
-                {handles[folder.key]?.name ? `Remembered folder: ${handles[folder.key].name}` : "No folder selected."}
-              </p>
-            </div>
-            <div className="toolbar">
-              {handles[folder.key] ? (
-                <>
-                  <button className="btn" onClick={() => restoreFolderPermission(folder.key)}>Restore Permission</button>
-                  <button className="btn" onClick={() => configureFolder(folder.key)}>Change Folder</button>
-                </>
-              ) : (
-                <button className="btn" onClick={() => configureFolder(folder.key)}>Select Folder</button>
-              )}
-            </div>
+        {setupError ? <div className="setup-error">{setupError}</div> : null}
+        {ready && data ? (
+          <div className="setup-summary">
+            <Kpi label="Properties" value={data.properties.length} />
+            <Kpi label="ECMs" value={data.ecms.length} />
+            <Kpi label="Usage Rows" value={data.monthlyUsage.length} />
+            <Kpi label="Savings" value={data.implementedSavings.length} />
           </div>
-        ))}
-      </div>
-      <div className="toolbar">
-        <button className="btn primary" disabled={!handles.database || busy} onClick={loadDatabase}>{busy ? "Working..." : ready ? "Reload Workspace" : "Resume Workspace"}</button>
-        <button className="btn primary" disabled={!handles.database || busy} onClick={importDatabase}>Import Existing .db</button>
-        <span className="muted">
+        ) : null}
+        <div className="folder-list">
+          {FOLDERS.map((folder) => {
+            const handle = handles[folder.key];
+            const status = folderStatusLabel(handle, folderStatuses[folder.key]);
+            return (
+              <div className={`folder-row ${handle ? "is-set" : ""}`} key={folder.key}>
+                <div className="folder-main">
+                  <div className="folder-name-line">
+                    <strong>{folder.label}</strong>
+                    {folder.required ? <span className="required-tag">Required</span> : null}
+                    <span className={`folder-status ${folderStatuses[folder.key] || "missing"}`}>● {status}</span>
+                  </div>
+                  <p>{folder.description}</p>
+                  <span className="folder-path">{handle?.name || "No folder selected"}</span>
+                </div>
+                <div className="folder-actions">
+                  <button className="btn" type="button" onClick={() => configureFolder(folder.key)}>{handle ? "Change" : "Select"}</button>
+                  {handle ? <button className="icon-btn danger" type="button" aria-label={`Forget ${folder.label}`} onClick={() => forgetFolder(folder.key)}>×</button> : null}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <p className="setup-note">{configuredCount} of {FOLDERS.length} folders selected. Required folders: {requiredConfigured ? "complete" : "not complete"}.</p>
+        <div className="setup-footer">
+          <button className="btn primary" disabled={!handles.database || busy} onClick={loadDatabase}>{busy ? "Working..." : ready ? "Done" : "Resume Workspace"}</button>
+          <button className="btn" disabled={!handles.database || busy} onClick={importDatabase}>Import Existing .db</button>
+          <button className="btn danger" type="button" disabled={busy || !configuredCount} onClick={forgetAllFolders}>Forget all folders</button>
+        </div>
+        <p className="muted setup-note">
           {ready
-            ? "ecm_register.db is open. Go to Dashboard or ECMs."
+            ? "ecm_register.db is open. You can go to Dashboard or continue changing folder assignments."
             : requiredConfigured
-              ? "Required folders are remembered. Click Resume Workspace after reopening the browser to restore permissions and load the database."
-              : "Select the required folders first, then import your existing .db."}
-        </span>
+              ? "Required folders are remembered. Resume Workspace restores permissions and opens ecm_register.db."
+              : "Select the required folders first, then import your existing .db or resume the workspace."}
+        </p>
       </div>
     </section>
   );
 }
-
 function folderStatusLabel(handle, status) {
   if (!handle) return "Missing";
   if (status === "granted") return "Ready";
@@ -1259,7 +1298,7 @@ function SavingsView({ ready, properties, implementedEcms, savings, form, setFor
   );
 }
 
-function MonthlyUsageView({ ready, properties, tenants, usage, form, setForm, save, remove, downloadUsage }) {
+function MonthlyUsageView({ ready, properties, tenants, usage, form, setForm, save, remove, downloadUsage, downloadUsageCsv }) {
   const [usageTab, setUsageTab] = useState(form.scope_type === "tenant" ? "tenant" : "landlord");
   if (!ready) return <EmptyState />;
   const propertyTenants = tenants.filter((tenant) => tenant.property_id === Number(form.property_id));
@@ -1313,7 +1352,10 @@ function MonthlyUsageView({ ready, properties, tenants, usage, form, setForm, sa
           <h3>Monthly Consumption</h3>
           <p className="muted">Landlord consumption is stored separately from tenant consumption. Tenant choices are filtered by the selected building.</p>
         </div>
-        <button className="btn" type="button" onClick={downloadUsage}>Download Usage Data</button>
+        <div className="toolbar">
+          <button className="btn" type="button" onClick={downloadUsage}>Download Usage Excel</button>
+          <button className="btn" type="button" onClick={downloadUsageCsv}>Download Usage CSV</button>
+        </div>
       </div>
       <div className="tabs">
         <button className={usageTab === "landlord" ? "active" : ""} type="button" onClick={() => switchUsageTab("landlord")}>Landlord Consumption</button>

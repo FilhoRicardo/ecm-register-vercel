@@ -199,6 +199,13 @@ export async function downloadUsageWorkbook(db) {
   downloadBlob(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), "Monthly_Usage_Data.xlsx");
 }
 
+export function downloadUsageCsv(db) {
+  const headers = ["usage_id", "property_id", "property_name", "scope", "tenant_id", "tenant_name", "usage_month", "electricity_kwh", "heating_kwh", "cooling_kwh", "notes"];
+  const rows = getMonthlyUsage(db).map(usageExportRow);
+  const csv = [headers, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n");
+  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), "Monthly_Usage_Data.csv");
+}
+
 export async function parseEcmReviewWorkbook(file) {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(await file.arrayBuffer());
@@ -1010,6 +1017,12 @@ function usageExportRow(row) {
     numberOrNull(row.cooling_kwh),
     row.notes || ""
   ];
+}
+
+function csvCell(value) {
+  if (value === null || value === undefined) return "";
+  const text = String(value).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
 function styleUsageWorkbook(worksheet) {

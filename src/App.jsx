@@ -67,6 +67,7 @@ const NAV = [
   ["ecms", "⚡ ECMs"],
   ["savings", "💶 Implemented Savings"],
   ["usage", "📊 Monthly Usage"],
+  ["data", "📈 Data View"],
   ["crrem", "🌍 CRREM Plot"],
   ["meetings", "📝 Monthly Meetings"],
   ["reports", "📤 Reports"],
@@ -892,6 +893,15 @@ export default function App() {
             downloadUsageCsv={() => downloadUsageCsv(db)}
           />
         )}
+        {active === "data" && (
+          <DataView
+            ready={ready}
+            properties={properties}
+            selectedPropertyId={selectedPropertyId}
+            setSelectedPropertyId={setSelectedPropertyId}
+            monthlyUsage={data?.monthlyUsage || []}
+          />
+        )}
         {active === "crrem" && (
           <CrremView
             ready={ready}
@@ -1517,6 +1527,109 @@ function MonthlyUsageView({ ready, properties, tenants, usage, form, setForm, sa
   );
 }
 
+function DataView({ ready, properties, selectedPropertyId, setSelectedPropertyId, monthlyUsage }) {
+  const availableYears = useMemo(() => dataViewYears(monthlyUsage), [monthlyUsage]);
+  const fallbackYear = availableYears[0] || String(new Date().getFullYear());
+  const [primaryYear, setPrimaryYear] = useState(fallbackYear);
+  const [comparisonYearA, setComparisonYearA] = useState(availableYears[1] || fallbackYear);
+  const [comparisonYearB, setComparisonYearB] = useState(availableYears[2] || fallbackYear);
+  const [utility, setUtility] = useState("electricity");
+  const [scope, setScope] = useState("building");
+
+  useEffect(() => {
+    if (!availableYears.length) return;
+    setPrimaryYear((prev) => availableYears.includes(prev) ? prev : availableYears[0]);
+    setComparisonYearA((prev) => availableYears.includes(prev) ? prev : availableYears[1] || availableYears[0]);
+    setComparisonYearB((prev) => availableYears.includes(prev) ? prev : availableYears[2] || availableYears[0]);
+  }, [availableYears]);
+
+  if (!ready) return <EmptyState />;
+  const property = properties.find((item) => item.id === Number(selectedPropertyId)) || properties[0] || null;
+  const selectedYears = [primaryYear, comparisonYearA, comparisonYearB].filter(Boolean);
+  const series = buildDataViewSeries(monthlyUsage, {
+    propertyId: property?.id,
+    scope,
+    utility,
+    years: selectedYears
+  });
+  const health = buildDataHealth(monthlyUsage, {
+    propertyId: property?.id,
+    scope,
+    utility,
+    years: selectedYears
+  });
+  const totals = selectedYears.map((year) => ({ year, total: series[year]?.reduce((sum, item) => sum + item.value, 0) || 0 }));
+
+  return (
+    <section className="section">
+      <div className="section-head">
+        <div>
+          <h3>Data View</h3>
+          <p className="muted">Compare one selected year as bars against two previous or reference years as line plots.</p>
+        </div>
+      </div>
+      <div className="card data-controls">
+        <div className="grid three">
+          <Field label="Property">
+            <select value={property?.id || ""} onChange={(e) => setSelectedPropertyId(e.target.value)}>
+              {properties.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Scope">
+            <select value={scope} onChange={(e) => setScope(e.target.value)}>
+              <option value="building">Landlord consumption</option>
+              <option value="tenant">Tenant consumption</option>
+            </select>
+          </Field>
+          <Field label="Utility">
+            <select value={utility} onChange={(e) => setUtility(e.target.value)}>
+              <option value="electricity">Electricity</option>
+              <option value="heating">Heating</option>
+              <option value="cooling">Cooling</option>
+              <option value="total">Total energy</option>
+            </select>
+          </Field>
+        </div>
+        <div className="grid three">
+          <Field label="Selected year">
+            <select value={primaryYear} onChange={(e) => setPrimaryYear(e.target.value)}>
+              {availableYears.map((year) => <option key={year} value={year}>{year}</option>)}
+            </select>
+          </Field>
+          <Field label="Comparison year 1">
+            <select value={comparisonYearA} onChange={(e) => setComparisonYearA(e.target.value)}>
+              {availableYears.map((year) => <option key={year} value={year}>{year}</option>)}
+            </select>
+          </Field>
+          <Field label="Comparison year 2">
+            <select value={comparisonYearB} onChange={(e) => setComparisonYearB(e.target.value)}>
+              {availableYears.map((year) => <option key={year} value={year}>{year}</option>)}
+            </select>
+          </Field>
+        </div>
+      </div>
+      <div className="grid four data-kpis" style={{ marginTop: 14 }}>
+        {totals.map(({ year, total }, index) => <Kpi key={`${year}-${index}`} label={`${year} total`} value={`${kwh(total)} kWh`} />)}
+        <Kpi label="Months selected" value={health.monthsPresent} />
+      </div>
+      <div className="data-view-grid">
+        <div className="card">
+          <h3>Data Health</h3>
+          <p className="muted">Green means a reading is present for that month, year, property, scope, and utility.</p>
+          <DataHealthTable years={selectedYears} health={health} />
+        </div>
+        <div className="card data-chart-card">
+          <div className="chart-head">
+            <h3>{dataViewUtilityLabel(utility)} comparison</h3>
+            <span className="muted">kWh/month</span>
+          </div>
+          <UsageComparisonChart years={selectedYears} primaryYear={primaryYear} series={series} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function CrremView({ ready, properties, selectedPropertyId, setSelectedPropertyId, monthlyUsage }) {
   const [mode, setMode] = useState("first_complete_year");
   const [reportingYear, setReportingYear] = useState("");
@@ -1924,6 +2037,104 @@ function CrremChart({ title, unit, points, actualKey, pathwayKey, baselineYear }
   );
 }
 
+function DataHealthTable({ years, health }) {
+  return (
+    <div className="data-health-wrap">
+      <table className="data-health-table">
+        <thead>
+          <tr>
+            <th>Month</th>
+            {years.map((year, index) => <th key={`${year}-${index}`}>{year}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {MONTH_LABELS.map((month, monthIndex) => (
+            <tr key={month}>
+              <td>{month}</td>
+              {years.map((year, yearIndex) => {
+                const present = Boolean(health.matrix?.[year]?.[monthIndex]);
+                return (
+                  <td key={`${year}-${yearIndex}-${month}`}>
+                    <span className={`status-light ${present ? "ok" : "missing"}`}>{present ? "Present" : "Missing"}</span>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function UsageComparisonChart({ years, primaryYear, series }) {
+  const width = 820;
+  const height = 390;
+  const pad = { left: 62, right: 26, top: 26, bottom: 54 };
+  const allValues = years.flatMap((year) => (series[year] || []).map((point) => point.value));
+  const maxValue = Math.max(...allValues, 0) * 1.15 || 1;
+  const chartW = width - pad.left - pad.right;
+  const chartH = height - pad.top - pad.bottom;
+  const x = (monthIndex) => pad.left + (monthIndex / 11) * chartW;
+  const y = (value) => pad.top + chartH - (Number(value || 0) / maxValue) * chartH;
+  const barW = Math.max(12, chartW / 18);
+  const primary = series[primaryYear] || [];
+  const comparisonYears = years.filter((year) => year !== primaryYear);
+  const colors = ["#a78bfa", "#22d3ee"];
+  return (
+    <svg className="usage-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Monthly usage comparison">
+      <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} className="chart-axis" />
+      <line x1={pad.left} y1={height - pad.bottom} x2={width - pad.right} y2={height - pad.bottom} className="chart-axis" />
+      {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+        const value = maxValue * ratio;
+        const yy = y(value);
+        return (
+          <g key={ratio}>
+            <line x1={pad.left} y1={yy} x2={width - pad.right} y2={yy} className="chart-gridline" />
+            <text x={pad.left - 8} y={yy + 4} className="chart-label" textAnchor="end">{kwh(value)}</text>
+          </g>
+        );
+      })}
+      {MONTH_LABELS.map((month, index) => (
+        <g key={month}>
+          <line x1={x(index)} y1={pad.top} x2={x(index)} y2={height - pad.bottom} className="chart-year-gridline" />
+          <text x={x(index)} y={height - 24} className="chart-label" textAnchor="middle">{month.slice(0, 3)}</text>
+        </g>
+      ))}
+      {primary.map((point) => {
+        const barH = height - pad.bottom - y(point.value);
+        return (
+          <rect
+            key={`${primaryYear}-${point.month}`}
+            x={x(point.monthIndex) - barW / 2}
+            y={y(point.value)}
+            width={barW}
+            height={Math.max(0, barH)}
+            rx="3"
+            className="usage-bar"
+          />
+        );
+      })}
+      {comparisonYears.map((year, index) => {
+        const points = series[year] || [];
+        const path = points.map((point, i) => `${i ? "L" : "M"} ${x(point.monthIndex).toFixed(1)} ${y(point.value).toFixed(1)}`).join(" ");
+        return (
+          <g key={year}>
+            <path d={path} fill="none" stroke={colors[index % colors.length]} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+            {points.map((point) => <circle key={`${year}-${point.month}`} cx={x(point.monthIndex)} cy={y(point.value)} r="3.5" fill={colors[index % colors.length]} />)}
+          </g>
+        );
+      })}
+      <g className="usage-chart-legend">
+        <text x={pad.left} y={18} className="chart-label">{primaryYear} bars</text>
+        {comparisonYears.map((year, index) => (
+          <text key={year} x={pad.left + 120 + index * 112} y={18} className="chart-label" fill={colors[index % colors.length]}>{year} line</text>
+        ))}
+      </g>
+    </svg>
+  );
+}
+
 function CrremCalculationTable({ analysis, points }) {
   const rows = buildCrremCalculationRows(analysis, points);
   return (
@@ -2038,6 +2249,65 @@ function chartPath(points, x, y, key) {
 function combineCrremSeries(historical, projected) {
   const rows = [...(historical || []), ...(projected || [])];
   return rows.sort((a, b) => a.year - b.year);
+}
+
+const MONTH_LABELS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+function dataViewYears(rows = []) {
+  const current = new Date().getFullYear();
+  const years = new Set([String(current), String(current - 1), String(current - 2)]);
+  for (const row of rows || []) {
+    const year = String(row.usage_month || "").slice(0, 4);
+    if (/^\d{4}$/.test(year)) years.add(year);
+  }
+  return [...years].sort((a, b) => Number(b) - Number(a));
+}
+
+function buildDataViewSeries(rows = [], options) {
+  const out = {};
+  for (const year of options.years || []) {
+    out[year] = MONTH_LABELS.map((_, index) => ({
+      month: String(index + 1).padStart(2, "0"),
+      monthIndex: index,
+      value: 0
+    }));
+  }
+  for (const row of rows || []) {
+    if (Number(row.property_id) !== Number(options.propertyId)) continue;
+    if ((row.scope_type || "building") !== options.scope) continue;
+    const [year, monthText] = String(row.usage_month || "").split("-");
+    const monthIndex = Number(monthText) - 1;
+    if (!out[year] || monthIndex < 0 || monthIndex > 11) continue;
+    out[year][monthIndex].value += monthlyUsageValue(row, options.utility);
+  }
+  return out;
+}
+
+function buildDataHealth(rows = [], options) {
+  const series = buildDataViewSeries(rows, options);
+  const matrix = {};
+  let primaryPresent = 0;
+  for (const year of options.years || []) {
+    matrix[year] = (series[year] || []).map((point) => point.value > 0);
+  }
+  const primary = options.years?.[0];
+  if (primary && matrix[primary]) primaryPresent = matrix[primary].filter(Boolean).length;
+  return { matrix, monthsPresent: `${primaryPresent}/12` };
+}
+
+function monthlyUsageValue(row, utility) {
+  if (utility === "total") {
+    return Number(row.electricity_kwh || 0) + Number(row.heating_kwh || 0) + Number(row.cooling_kwh || 0);
+  }
+  return Number(row[`${utility}_kwh`] || 0);
+}
+
+function dataViewUtilityLabel(utility) {
+  if (utility === "total") return "Total energy";
+  if (utility === "electricity") return "Electricity";
+  if (utility === "heating") return "Heating";
+  if (utility === "cooling") return "Cooling";
+  return utility || "Usage";
 }
 
 function formatCrremNumber(value) {

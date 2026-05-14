@@ -2069,15 +2069,16 @@ function DataHealthTable({ years, health }) {
 
 function UsageComparisonChart({ years, primaryYear, series }) {
   const width = 820;
-  const height = 390;
-  const pad = { left: 62, right: 26, top: 26, bottom: 54 };
+  const height = 360;
+  const pad = { left: 70, right: 22, top: 26, bottom: 48 };
   const allValues = years.flatMap((year) => (series[year] || []).map((point) => point.value));
   const maxValue = Math.max(...allValues, 0) * 1.15 || 1;
   const chartW = width - pad.left - pad.right;
   const chartH = height - pad.top - pad.bottom;
-  const x = (monthIndex) => pad.left + (monthIndex / 11) * chartW;
+  const monthStep = chartW / 12;
+  const x = (monthIndex) => pad.left + monthStep * (monthIndex + 0.5);
   const y = (value) => pad.top + chartH - (Number(value || 0) / maxValue) * chartH;
-  const barW = Math.max(12, chartW / 18);
+  const barW = Math.min(42, monthStep * 0.62);
   const primary = series[primaryYear] || [];
   const comparisonYears = years.filter((year) => year !== primaryYear);
   const colors = ["#a78bfa", "#22d3ee"];
@@ -2097,10 +2098,11 @@ function UsageComparisonChart({ years, primaryYear, series }) {
       })}
       {MONTH_LABELS.map((month, index) => (
         <g key={month}>
-          <line x1={x(index)} y1={pad.top} x2={x(index)} y2={height - pad.bottom} className="chart-year-gridline" />
+          <line x1={pad.left + monthStep * index} y1={pad.top} x2={pad.left + monthStep * index} y2={height - pad.bottom} className="chart-year-gridline" />
           <text x={x(index)} y={height - 24} className="chart-label" textAnchor="middle">{month.slice(0, 3)}</text>
         </g>
       ))}
+      <line x1={width - pad.right} y1={pad.top} x2={width - pad.right} y2={height - pad.bottom} className="chart-year-gridline" />
       {primary.map((point) => {
         const barH = height - pad.bottom - y(point.value);
         return (

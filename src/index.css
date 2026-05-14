@@ -500,11 +500,11 @@ select option {
   align-items: stretch;
 }
 .data-chart-card {
-  min-height: 480px;
+  min-height: 430px;
 }
 .usage-chart {
   width: 100%;
-  min-height: 390px;
+  min-height: 350px;
   display: block;
 }
 .usage-bar {
@@ -514,10 +514,10 @@ select option {
 }
 .data-health-wrap {
   overflow: auto;
-  max-height: 520px;
+  max-height: none;
   border: 1px solid rgba(255,255,255,0.07);
   border-radius: 8px;
-  margin-top: 12px;
+  margin-top: 10px;
 }
 .data-health-table {
   border: 0;
@@ -526,6 +526,8 @@ select option {
 .data-health-table td {
   text-align: center;
   vertical-align: middle;
+  padding: 6px 8px;
+  font-size: 11px;
 }
 .data-health-table th:first-child,
 .data-health-table td:first-child {
@@ -536,10 +538,10 @@ select option {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 76px;
+  min-width: 68px;
   border-radius: 999px;
-  padding: 4px 8px;
-  font-size: 10px;
+  padding: 3px 7px;
+  font-size: 9px;
   font-weight: 900;
   text-transform: uppercase;
 }

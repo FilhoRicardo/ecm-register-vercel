@@ -51,7 +51,7 @@ import {
 const FOLDERS = [
   { key: "database", label: "Database", required: true, description: "Where ecm_register.db is stored and backed up" },
   { key: "ecmNotes", label: "ECM Notes", required: true, description: "Obsidian folder for ECM Markdown files" },
-  { key: "savingNotes", label: "Savings Notes", required: true, description: "Obsidian folder for implemented saving notes" },
+  { key: "savingNotes", label: "Implemented Savings Notes", required: true, description: "Obsidian folder where implemented saving Markdown files are written" },
   { key: "meetingNotes", label: "Meeting Notes", required: true, description: "Obsidian folder for monthly meeting notes" },
   { key: "calculationFiles", label: "Calculations", required: true, description: "Local folder for ECM calculation evidence" },
   { key: "reports", label: "Reports", required: false, description: "Optional folder for generated reports" },
@@ -59,6 +59,7 @@ const FOLDERS = [
 ];
 
 const NAV = [
+  ["welcome", "👋 Welcome"],
   ["setup", "⚙️ Setup"],
   ["dashboard", "🎯 Dashboard"],
   ["properties", "🏢 Properties"],
@@ -125,7 +126,7 @@ const EMPTY_EQUIPMENT = {
 };
 
 export default function App() {
-  const [active, setActive] = useState("setup");
+  const [active, setActive] = useState("welcome");
   const [handles, setHandles] = useState({});
   const [folderStatuses, setFolderStatuses] = useState({});
   const [db, setDb] = useState(null);
@@ -782,6 +783,7 @@ export default function App() {
           <span className="pill">{ready ? "Synced local workspace" : "Setup required"}</span>
         </div>
 
+        {active === "welcome" && <WelcomeView ready={ready} />}
         {active === "setup" && (
           <SetupView
             handles={handles}
@@ -921,6 +923,88 @@ export default function App() {
         )}
       </main>
     </div>
+  );
+}
+
+function WelcomeView({ ready }) {
+  const workflow = [
+    ["1", "Setup folders", "Connect the local database folder, Obsidian note folders, calculation evidence folder, and optional report/import folders."],
+    ["2", "Import or resume database", "Open ecm_register.db from your selected database folder or import an existing SQLite database into that folder."],
+    ["3", "Register portfolio data", "Add properties, tenants, equipment, monthly consumption, ECMs, and implemented savings from the app."],
+    ["4", "Sync evidence", "ECM notes, implemented saving notes, meeting notes, and calculation files are written to your selected local folders."],
+    ["5", "Report and review", "Export Excel, CSV, PPTX, CRREM PDF, and ECM review workbooks from the Reports and Monthly Consumption pages."]
+  ];
+  const storageRows = [
+    ["Properties", "SQLite database", "Property name, address, floor area, tariffs, CRREM settings, carriers, renewables, notes."],
+    ["Tenants", "SQLite database", "Tenant names, tenant floor area, location labels, and tenant notes."],
+    ["Equipment", "SQLite database", "Equipment records, type, Brick class, utility, optional tenant/property relationship."],
+    ["ECMs", "SQLite database + ECM Notes folder", "Every ECM is stored in SQLite and written as a Markdown note in the ECM Notes folder."],
+    ["Implemented savings", "SQLite database + Implemented Savings Notes folder", "Measured saving periods are stored in SQLite and written as Markdown notes in the implemented-savings folder."],
+    ["Monthly consumption", "SQLite database", "Landlord and tenant monthly electricity, heating, and cooling values."],
+    ["Monthly meeting notes", "Monthly Meeting Notes folder", "Meeting notes are Markdown files in Obsidian. The app creates and edits the pre/post meeting sections."],
+    ["Calculation evidence", "Calculation Files folder", "Uploaded calculation files are renamed and routed locally for traceability."],
+    ["Reports", "Browser download / optional Reports folder", "Excel registers, usage CSV/Excel, ECM review workbooks, PPTX reports, and CRREM PDFs are exported locally."],
+    ["Database admin", "SQLite database + backup download", "Backups and database checks operate on the local SQLite file."]
+  ];
+  return (
+    <section className="section">
+      <div className="welcome-grid">
+        <div className="card welcome-card">
+          <span className="eyebrow">START HERE</span>
+          <h3>ECM Register Workflow</h3>
+          <p className="muted">
+            This app is a browser-hosted interface for local files. Vercel serves the app, but your database, Obsidian notes, calculation evidence, and reports stay on your machine.
+          </p>
+          <div className="workflow-list">
+            {workflow.map(([step, title, text]) => (
+              <div className="workflow-step" key={step}>
+                <span>{step}</span>
+                <div>
+                  <strong>{title}</strong>
+                  <p>{text}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="card welcome-card">
+          <span className="eyebrow">CURRENT STATE</span>
+          <h3>{ready ? "Workspace is loaded" : "Setup required"}</h3>
+          <p className="muted">
+            {ready
+              ? "Your local database is open. You can work from any tab and exports will download locally."
+              : "Go to Setup, connect the required folders, then resume or import ecm_register.db."}
+          </p>
+          <div className="artifact-callout">
+            <strong>Markdown outputs</strong>
+            <p>ECMs, implemented savings, and monthly meeting notes are the records that become Obsidian `.md` files.</p>
+          </div>
+          <div className="artifact-callout">
+            <strong>Database records</strong>
+            <p>Properties, tenants, equipment, ECMs, implemented savings, monthly usage, and attachment references are stored in SQLite.</p>
+          </div>
+        </div>
+      </div>
+      <div className="card" style={{ marginTop: 14 }}>
+        <h3>Where Each Artifact Is Saved</h3>
+        <div style={{ overflow: "auto" }}>
+          <table>
+            <thead>
+              <tr><th>Artifact</th><th>Saved to</th><th>Notes</th></tr>
+            </thead>
+            <tbody>
+              {storageRows.map(([artifact, savedTo, notes]) => (
+                <tr key={artifact}>
+                  <td><strong>{artifact}</strong></td>
+                  <td>{savedTo}</td>
+                  <td>{notes}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
   );
 }
 

@@ -330,7 +330,7 @@ export function getAdminTracker(db, propertyId = null) {
      FROM monthly_admin_tracker a
      JOIN properties p ON p.id = a.property_id
      ${propertyId ? "WHERE a.property_id = ?" : ""}
-     ORDER BY p.name, a.admin_year DESC`,
+     ORDER BY p.name, a.admin_year DESC, a.admin_month DESC`,
     propertyId ? [propertyId] : []
   ).map((row) => ({
     ...row,
@@ -345,12 +345,13 @@ export function getAdminTracker(db, propertyId = null) {
 export function upsertAdminTracker(db, input) {
   const existing = one(
     db,
-    "SELECT id FROM monthly_admin_tracker WHERE property_id=? AND admin_year=?",
-    [input.property_id, input.admin_year]
+    "SELECT id FROM monthly_admin_tracker WHERE property_id=? AND admin_year=? AND admin_month=?",
+    [input.property_id, input.admin_year, input.admin_month]
   );
   const params = [
     input.property_id,
     Number(input.admin_year),
+    Number(input.admin_month),
     input.docunite_report ? 1 : 0,
     input.ecm_report ? 1 : 0,
     input.status_quo ? 1 : 0,
@@ -361,7 +362,7 @@ export function upsertAdminTracker(db, input) {
   if (existing) {
     db.run(
       `UPDATE monthly_admin_tracker
-       SET property_id=?, admin_year=?, docunite_report=?, ecm_report=?, status_quo=?,
+       SET property_id=?, admin_year=?, admin_month=?, docunite_report=?, ecm_report=?, status_quo=?,
            pre_meeting_notes=?, post_meeting_notes=?, comments=?, updated_at=CURRENT_TIMESTAMP
        WHERE id=?`,
       [...params, existing.id]
@@ -370,9 +371,9 @@ export function upsertAdminTracker(db, input) {
   }
   db.run(
     `INSERT INTO monthly_admin_tracker (
-      property_id, admin_year, docunite_report, ecm_report, status_quo,
+      property_id, admin_year, admin_month, docunite_report, ecm_report, status_quo,
       pre_meeting_notes, post_meeting_notes, comments, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     params
   );
   return Number(one(db, "SELECT last_insert_rowid() AS id").id);

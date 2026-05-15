@@ -138,6 +138,7 @@ CREATE TABLE IF NOT EXISTS monthly_admin_tracker (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   property_id INTEGER NOT NULL,
   admin_year INTEGER NOT NULL,
+  admin_month INTEGER NOT NULL DEFAULT 1,
   docunite_report INTEGER NOT NULL DEFAULT 0,
   ecm_report INTEGER NOT NULL DEFAULT 0,
   status_quo INTEGER NOT NULL DEFAULT 0,
@@ -147,7 +148,7 @@ CREATE TABLE IF NOT EXISTS monthly_admin_tracker (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE,
-  UNIQUE (property_id, admin_year)
+  UNIQUE (property_id, admin_year, admin_month)
 );
 `;
 
@@ -176,6 +177,66 @@ export function migrate(db) {
       db.run(sql);
     } catch {
       // Column already exists.
+    }
+  }
+  migrateMonthlyAdminTracker(db);
+}
+
+function migrateMonthlyAdminTracker(db) {
+  try {
+    const tableInfo = db.exec("PRAGMA table_info(monthly_admin_tracker)")?.[0]?.values || [];
+    if (!tableInfo.length) return;
+    const columns = tableInfo.map((row) => row[1]);
+    const hasMonth = columns.includes("admin_month");
+    const indexRows = db.exec("PRAGMA index_list(monthly_admin_tracker)")?.[0]?.values || [];
+    let hasMonthlyUnique = false;
+    for (const row of indexRows) {
+      const indexName = row[1];
+      const isUnique = Number(row[2]) === 1;
+      if (!isUnique) continue;
+      const indexColumns = (db.exec(`PRAGMA index_info(${JSON.stringify(indexName)})`)?.[0]?.values || []).map((item) => item[2]);
+      if (indexColumns.join("|") === "property_id|admin_year|admin_month") hasMonthlyUnique = true;
+    }
+    if (hasMonth && hasMonthlyUnique) return;
+
+    db.run("PRAGMA foreign_keys = OFF");
+    db.run("DROP TABLE IF EXISTS monthly_admin_tracker_new");
+    db.run(`
+      CREATE TABLE monthly_admin_tracker_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        property_id INTEGER NOT NULL,
+        admin_year INTEGER NOT NULL,
+        admin_month INTEGER NOT NULL DEFAULT 1,
+        docunite_report INTEGER NOT NULL DEFAULT 0,
+        ecm_report INTEGER NOT NULL DEFAULT 0,
+        status_quo INTEGER NOT NULL DEFAULT 0,
+        pre_meeting_notes INTEGER NOT NULL DEFAULT 0,
+        post_meeting_notes INTEGER NOT NULL DEFAULT 0,
+        comments TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE,
+        UNIQUE (property_id, admin_year, admin_month)
+      )
+    `);
+    const monthExpr = hasMonth ? "COALESCE(admin_month, 1)" : "1";
+    db.run(`
+      INSERT OR IGNORE INTO monthly_admin_tracker_new (
+        id, property_id, admin_year, admin_month, docunite_report, ecm_report,
+        status_quo, pre_meeting_notes, post_meeting_notes, comments, created_at, updated_at
+      )
+      SELECT id, property_id, admin_year, ${monthExpr}, docunite_report, ecm_report,
+        status_quo, pre_meeting_notes, post_meeting_notes, comments, created_at, updated_at
+      FROM monthly_admin_tracker
+    `);
+    db.run("DROP TABLE monthly_admin_tracker");
+    db.run("ALTER TABLE monthly_admin_tracker_new RENAME TO monthly_admin_tracker");
+    db.run("PRAGMA foreign_keys = ON");
+  } catch {
+    try {
+      db.run("PRAGMA foreign_keys = ON");
+    } catch {
+      // Keep migration non-blocking for older local databases.
     }
   }
 }

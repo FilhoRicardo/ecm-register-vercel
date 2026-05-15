@@ -456,7 +456,8 @@ export default function App() {
     upsertAdminTracker(db, {
       ...next,
       property_id: Number(next.property_id),
-      admin_year: Number(next.admin_year)
+      admin_year: Number(next.admin_year),
+      admin_month: Number(next.admin_month)
     });
     setAdminForm((prev) => ({ ...prev, ...next }));
     await persist("Admin tracker saved.");
@@ -1084,7 +1085,7 @@ function WelcomeView({ ready }) {
     ["Monthly meeting notes", "Monthly Meeting Notes folder", "Meeting notes are Markdown files in Obsidian. The app creates and edits the pre/post meeting sections."],
     ["Status quo timelines", "Status Quo folder", "Property status updates are Markdown files in Obsidian. The app adds or edits one month section per property."],
     ["Open actions", "Open Actions folder", "Property action lists are Markdown checklist files in Obsidian. The app creates open items and closes them with comments."],
-    ["Admin tracker", "SQLite database", "Annual deliverable status by property: Docunite report, ECM report, Status Quo, pre-meeting notes, and post-meeting notes."],
+    ["Admin tracker", "SQLite database", "Monthly deliverable status by property: Docunite report, ECM report, Status Quo, pre-meeting notes, and post-meeting notes."],
     ["Calculation evidence", "Calculation Files folder", "Uploaded calculation files are renamed and routed locally for traceability."],
     ["Reports", "Browser download / optional Reports folder", "Excel registers, usage CSV/Excel, ECM review workbooks, PPTX reports, and CRREM PDFs are exported locally."],
     ["Database admin", "SQLite database + backup download", "Backups and database checks operate on the local SQLite file."]
@@ -1183,7 +1184,7 @@ function WorkflowGuideView() {
       title: "Admin, Consumption, And Client Outputs",
       tone: "Make sure the monthly evidence pack is complete.",
       steps: [
-        "Use Admin Tracker to mark property deliverables by year.",
+        "Use Admin Tracker to mark property deliverables by month and year.",
         "Add the past month consumption in Monthly Usage.",
         "Update Status Quo where the property story changed.",
         "Export or send the CRREM plot and Benchmark view to the client.",
@@ -2572,13 +2573,18 @@ function AdminTrackerView({ ready, properties, records, form, setForm, save }) {
   if (!ready) return <EmptyState />;
   const selectedPropertyId = Number(form.property_id || properties[0]?.id || "");
   const propertyRecords = (records || []).filter((record) => record.property_id === selectedPropertyId);
-  const sortedRecords = [...propertyRecords].sort((a, b) => Number(b.admin_year) - Number(a.admin_year));
+  const sortedRecords = [...propertyRecords].sort((a, b) => {
+    const yearDiff = Number(b.admin_year) - Number(a.admin_year);
+    if (yearDiff) return yearDiff;
+    return Number(b.admin_month) - Number(a.admin_month);
+  });
   const set = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
   const editRecord = (record) => {
     setForm({
       ...record,
       property_id: String(record.property_id),
       admin_year: String(record.admin_year),
+      admin_month: String(record.admin_month || 1),
       comments: record.comments || ""
     });
   };
@@ -2590,7 +2596,7 @@ function AdminTrackerView({ ready, properties, records, form, setForm, save }) {
       <div className="section-head">
         <div>
           <h3>Admin Tracker</h3>
-          <p className="muted">Lightweight annual deliverable tracker stored only in the SQLite database.</p>
+          <p className="muted">Lightweight monthly deliverable tracker stored only in the SQLite database.</p>
         </div>
       </div>
       <div className="admin-tracker-grid">
@@ -2603,6 +2609,11 @@ function AdminTrackerView({ ready, properties, records, form, setForm, save }) {
             </Field>
             <Field label="Year">
               <input type="number" min="2024" max="2050" value={form.admin_year} onChange={(event) => set("admin_year", event.target.value)} />
+            </Field>
+            <Field label="Month">
+              <select value={form.admin_month} onChange={(event) => set("admin_month", event.target.value)}>
+                {MONTH_LABELS.map((label, index) => <option key={label} value={index + 1}>{label}</option>)}
+              </select>
             </Field>
             <Field label="Comments">
               <textarea value={form.comments} onChange={(event) => set("comments", event.target.value)} placeholder="Admin context, blockers, or handover notes..." />
@@ -2617,7 +2628,7 @@ function AdminTrackerView({ ready, properties, records, form, setForm, save }) {
             </div>
             <div className="toolbar">
               <button className="btn primary">Save Admin Row</button>
-              <button className="btn" type="button" onClick={() => setForm({ ...defaultAdminTrackerForm(), property_id: String(selectedPropertyId || "") })}>New Year</button>
+              <button className="btn" type="button" onClick={() => setForm({ ...defaultAdminTrackerForm(), property_id: String(selectedPropertyId || "") })}>New Month</button>
             </div>
           </form>
         </div>
@@ -2627,7 +2638,7 @@ function AdminTrackerView({ ready, properties, records, form, setForm, save }) {
             <table>
               <thead>
                 <tr>
-                  <th>Year</th>
+                  <th>Period</th>
                   {ADMIN_DELIVERABLES.map(([, label]) => <th key={label}>{label}</th>)}
                   <th>Comments</th>
                 </tr>
@@ -2635,7 +2646,7 @@ function AdminTrackerView({ ready, properties, records, form, setForm, save }) {
               <tbody>
                 {sortedRecords.map((record) => (
                   <tr key={record.id} onClick={() => editRecord(record)} style={{ cursor: "pointer" }}>
-                    <td><strong>{record.admin_year}</strong></td>
+                    <td><strong>{MONTH_LABELS[Number(record.admin_month || 1) - 1]} {record.admin_year}</strong></td>
                     {ADMIN_DELIVERABLES.map(([key]) => (
                       <td key={key} onClick={(event) => event.stopPropagation()}>
                         <button className={`tracker-check ${record[key] ? "is-done" : ""}`} type="button" onClick={() => toggleDeliverable(record, key)}>
@@ -2646,7 +2657,7 @@ function AdminTrackerView({ ready, properties, records, form, setForm, save }) {
                     <td>{record.comments || ""}</td>
                   </tr>
                 ))}
-                {!sortedRecords.length ? <tr><td colSpan={ADMIN_DELIVERABLES.length + 2} className="muted">No admin tracker rows for this property yet.</td></tr> : null}
+                {!sortedRecords.length ? <tr><td colSpan={ADMIN_DELIVERABLES.length + 2} className="muted">No monthly admin tracker rows for this property yet.</td></tr> : null}
               </tbody>
             </table>
           </div>
@@ -3630,6 +3641,7 @@ function defaultAdminTrackerForm() {
     id: "",
     property_id: "",
     admin_year: String(new Date().getFullYear()),
+    admin_month: String(new Date().getMonth() + 1),
     docunite_report: false,
     ecm_report: false,
     status_quo: false,

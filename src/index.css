@@ -520,6 +520,78 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
 .status-quo-bubble p:last-child {
   margin-bottom: 0;
 }
+.open-actions-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.68fr) minmax(0, 1.32fr);
+  gap: 14px;
+  align-items: stretch;
+}
+.open-actions-editor {
+  min-height: calc(100vh - 230px);
+}
+.open-actions-list-card {
+  min-height: calc(100vh - 230px);
+  max-height: calc(100vh - 230px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.open-actions-textarea {
+  min-height: 180px;
+}
+.open-actions-list {
+  display: grid;
+  gap: 12px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  padding-right: 8px;
+}
+.open-action-item {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 12px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.035);
+  padding: 12px;
+}
+.open-action-item.is-done {
+  opacity: 0.72;
+}
+.open-action-check {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: 1px solid rgba(147,197,253,0.42);
+  background: rgba(15,23,42,0.68);
+  color: #86efac;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+}
+.open-action-body strong {
+  display: block;
+  color: #f8fafc;
+  line-height: 1.4;
+}
+.open-action-comment {
+  color: #94a3b8;
+  margin: 7px 0 0;
+  line-height: 1.4;
+}
+.open-action-close {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 9px;
+  margin-top: 10px;
+  align-items: start;
+}
+.open-action-close textarea {
+  min-height: 58px;
+  resize: vertical;
+}
 .field { display: grid; gap: 5px; margin-bottom: 11px; }
 .field label { font-size: 10px; text-transform: uppercase; font-weight: 900; color: #64748b; letter-spacing: 0.08em; }
 .field-help {
@@ -940,6 +1012,8 @@ tr:hover td { background: rgba(124,58,237,0.055); }
   .data-view-grid,
   .benchmark-grid { grid-template-columns: 1fr; }
   .status-quo-grid { grid-template-columns: 1fr; }
+  .open-actions-grid { grid-template-columns: 1fr; }
+  .open-action-close { grid-template-columns: 1fr; }
   .benchmark-control-grid,
   .benchmark-definition-grid { grid-template-columns: 1fr; }
   .grid.two, .grid.three, .grid.four { grid-template-columns: 1fr; }

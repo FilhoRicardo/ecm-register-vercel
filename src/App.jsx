@@ -55,6 +55,7 @@ const FOLDERS = [
   { key: "savingNotes", label: "Implemented Savings Notes", required: true, description: "Obsidian folder where implemented saving Markdown files are written" },
   { key: "meetingNotes", label: "Meeting Notes", required: true, description: "Obsidian folder for monthly meeting notes" },
   { key: "statusQuo", label: "Status Quo", required: false, description: "Obsidian folder for property status quo timeline Markdown files" },
+  { key: "openActions", label: "Open Actions", required: false, description: "Obsidian folder for property open action checklist Markdown files" },
   { key: "calculationFiles", label: "Calculations", required: true, description: "Local folder for ECM calculation evidence" },
   { key: "reports", label: "Reports", required: false, description: "Optional folder for generated reports" },
   { key: "imports", label: "Imports", required: false, description: "Optional folder for source import files" }
@@ -74,6 +75,7 @@ const NAV = [
   ["meetings", "📝 Monthly Meetings"],
   ["reports", "📤 Reports"],
   ["statusquo", "\u{1F4CD} Status Quo"],
+  ["actions", "\u{2611}\u{FE0F} Open Actions"],
   ["benchmark", "\u{1F3C1} Benchmark"],
   ["database", "🧪 SQLite Lab"],
   ["admin", "🛡️ Database Admin"]
@@ -990,6 +992,18 @@ export default function App() {
             notify={notify}
           />
         )}
+        {active === "actions" && (
+          <OpenActionsView
+            ready={ready}
+            properties={properties}
+            selectedPropertyId={selectedPropertyId}
+            setSelectedPropertyId={setSelectedPropertyId}
+            folderHandle={handles.openActions}
+            folderStatus={folderStatuses.openActions}
+            configureFolder={() => configureFolder("openActions")}
+            notify={notify}
+          />
+        )}
         {active === "database" && <DatabaseView ready={ready} db={db} sqlText={sqlText} setSqlText={setSqlText} runSql={runSql} sqlRows={sqlRows} />}
         {active === "admin" && (
           <DatabaseAdminView
@@ -1013,7 +1027,7 @@ function WelcomeView({ ready }) {
     ["1", "Setup folders", "Connect the local database folder, Obsidian note folders, calculation evidence folder, and optional report/import folders."],
     ["2", "Import or resume database", "Open ecm_register.db from your selected database folder or import an existing SQLite database into that folder."],
     ["3", "Register portfolio data", "Add properties, tenants, equipment, monthly consumption, ECMs, and implemented savings from the app."],
-    ["4", "Sync evidence", "ECM notes, implemented saving notes, meeting notes, status quo timelines, and calculation files are written to your selected local folders."],
+    ["4", "Sync evidence", "ECM notes, implemented saving notes, meeting notes, status quo timelines, open actions, and calculation files are written to your selected local folders."],
     ["5", "Report and review", "Export Excel, CSV, PPTX, CRREM PDF, and ECM review workbooks from the Reports and Monthly Consumption pages."]
   ];
   const storageRows = [
@@ -1025,6 +1039,7 @@ function WelcomeView({ ready }) {
     ["Monthly consumption", "SQLite database", "Landlord and tenant monthly electricity, heating, and cooling values."],
     ["Monthly meeting notes", "Monthly Meeting Notes folder", "Meeting notes are Markdown files in Obsidian. The app creates and edits the pre/post meeting sections."],
     ["Status quo timelines", "Status Quo folder", "Property status updates are Markdown files in Obsidian. The app adds or edits one month section per property."],
+    ["Open actions", "Open Actions folder", "Property action lists are Markdown checklist files in Obsidian. The app creates open items and closes them with comments."],
     ["Calculation evidence", "Calculation Files folder", "Uploaded calculation files are renamed and routed locally for traceability."],
     ["Reports", "Browser download / optional Reports folder", "Excel registers, usage CSV/Excel, ECM review workbooks, PPTX reports, and CRREM PDFs are exported locally."],
     ["Database admin", "SQLite database + backup download", "Backups and database checks operate on the local SQLite file."]
@@ -2271,6 +2286,144 @@ function StatusQuoView({ ready, properties, selectedPropertyId, setSelectedPrope
   );
 }
 
+function OpenActionsView({ ready, properties, selectedPropertyId, setSelectedPropertyId, folderHandle, folderStatus, configureFolder, notify }) {
+  const selectedId = Number(selectedPropertyId) || properties[0]?.id || "";
+  const property = properties.find((item) => item.id === Number(selectedId)) || properties[0] || null;
+  const [actions, setActions] = useState([]);
+  const [frontmatter, setFrontmatter] = useState("");
+  const [filename, setFilename] = useState("");
+  const [newAction, setNewAction] = useState("");
+  const [comments, setComments] = useState({});
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!ready || !folderHandle || !property) return;
+    loadOpenActions();
+  }, [ready, folderHandle, property?.id]);
+
+  async function loadOpenActions() {
+    if (!folderHandle || !property) return;
+    setLoading(true);
+    try {
+      if (!(await ensurePermission(folderHandle, "readwrite"))) throw new Error("Open Actions folder permission was not granted.");
+      const files = await listMarkdownFiles(folderHandle);
+      const file = findOpenActionsFile(files, property);
+      const parsed = parseOpenActionsMarkdown(file?.text || "", property);
+      setActions(parsed.actions);
+      setFrontmatter(parsed.frontmatter);
+      setFilename(file?.name || openActionsFilename(property));
+      setComments({});
+    } catch (error) {
+      notify(error.message || String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function writeActions(nextActions, nextFrontmatter = frontmatter, nextFilename = filename) {
+    if (!folderHandle || !property) throw new Error("Configure the Open Actions folder first.");
+    if (!(await ensurePermission(folderHandle, "readwrite"))) throw new Error("Open Actions folder permission was not granted.");
+    const fileFrontmatter = nextFrontmatter || openActionsFrontmatter(property);
+    const fileName = nextFilename || openActionsFilename(property);
+    await writeTextIntoFolder(folderHandle, fileName, buildOpenActionsMarkdown(fileFrontmatter, nextActions));
+    setActions(nextActions);
+    setFrontmatter(fileFrontmatter);
+    setFilename(fileName);
+  }
+
+  async function addAction(event) {
+    event.preventDefault();
+    if (!folderHandle || !property) {
+      notify("Configure the Open Actions folder in Setup first.");
+      return;
+    }
+    const text = normaliseActionText(newAction);
+    if (!text) {
+      notify("Add an action before saving.");
+      return;
+    }
+    setLoading(true);
+    try {
+      await writeActions([...actions, { text, done: false, comment: "" }]);
+      setNewAction("");
+      notify("Open action saved.");
+    } catch (error) {
+      notify(error.message || String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function closeAction(index) {
+    const comment = String(comments[index] || "").trim();
+    setLoading(true);
+    try {
+      const nextActions = actions.map((action, actionIndex) => actionIndex === index ? { ...action, done: true, comment } : action);
+      await writeActions(nextActions);
+      setComments((prev) => ({ ...prev, [index]: "" }));
+      notify("Action closed.");
+    } catch (error) {
+      notify(error.message || String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (!ready) return <EmptyState />;
+  const openCount = actions.filter((action) => !action.done).length;
+  const closedCount = actions.length - openCount;
+  return (
+    <section className="section">
+      <div className="section-head">
+        <div>
+          <h3>Open Actions</h3>
+          <p className="muted">Maintain one Obsidian checklist per property.</p>
+        </div>
+        <div className="toolbar">
+          <button className="btn" type="button" onClick={configureFolder}>{folderHandle ? "Change Folder" : "Select Folder"}</button>
+          <button className="btn" type="button" disabled={!folderHandle || loading} onClick={loadOpenActions}>{loading ? "Loading..." : "Refresh"}</button>
+        </div>
+      </div>
+      {!folderHandle ? (
+        <div className="card">
+          <h3>Open Actions folder needed</h3>
+          <p className="muted">Select the Obsidian folder where property action checklist files should be saved.</p>
+          <button className="btn primary" type="button" onClick={configureFolder}>Select Open Actions Folder</button>
+        </div>
+      ) : (
+        <div className="open-actions-grid">
+          <div className="card open-actions-editor">
+            <form onSubmit={addAction}>
+              <Field label="Property">
+                <select value={property?.id || ""} onChange={(event) => setSelectedPropertyId(event.target.value)}>
+                  {properties.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </select>
+              </Field>
+              <Field label="New open item" help="Saved as an Obsidian checklist item: - [ ] action text">
+                <textarea className="open-actions-textarea" value={newAction} onChange={(event) => setNewAction(event.target.value)} placeholder="Add the action text..." />
+              </Field>
+              <div className="toolbar">
+                <button className="btn primary" disabled={loading}>{loading ? "Saving..." : "Add Open Item"}</button>
+                <button className="btn" type="button" onClick={() => setNewAction("")}>Clear</button>
+              </div>
+              <p className="muted">File: {filename || openActionsFilename(property)}. Folder status: {folderStatus || "selected"}.</p>
+            </form>
+          </div>
+          <div className="card open-actions-list-card">
+            <div className="section-head">
+              <div>
+                <h3>{property?.name || "Property"} Actions</h3>
+                <p className="muted">{openCount} open, {closedCount} closed.</p>
+              </div>
+            </div>
+            <OpenActionsList actions={actions} comments={comments} setComments={setComments} closeAction={closeAction} loading={loading} />
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function DatabaseView({ ready, db, sqlText, setSqlText, runSql, sqlRows }) {
   if (!ready) return <EmptyState />;
   const tables = ["properties", "tenants", "equipment", "ecms", "monthly_utility_usage", "ecm_measured_savings", "ecm_attachments"];
@@ -2366,6 +2519,35 @@ function StatusQuoTimeline({ entries }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function OpenActionsList({ actions, comments, setComments, closeAction, loading }) {
+  const sorted = [...(actions || [])].map((action, index) => ({ ...action, index })).sort((a, b) => Number(a.done) - Number(b.done));
+  if (!sorted.length) return <p className="muted">Add the first open action from the left panel.</p>;
+  return (
+    <div className="open-actions-list">
+      {sorted.map((action) => (
+        <div className={`open-action-item ${action.done ? "is-done" : ""}`} key={`${action.index}-${action.text}`}>
+          <div className="open-action-check">{action.done ? "✓" : ""}</div>
+          <div className="open-action-body">
+            <strong>{action.text}</strong>
+            {action.done ? (
+              <p className="open-action-comment">{action.comment ? `comment: ${action.comment}` : "comment: closed without comment"}</p>
+            ) : (
+              <div className="open-action-close">
+                <textarea
+                  value={comments[action.index] || ""}
+                  onChange={(event) => setComments((prev) => ({ ...prev, [action.index]: event.target.value }))}
+                  placeholder="Closing comment, optional"
+                />
+                <button className="btn primary" type="button" disabled={loading} onClick={() => closeAction(action.index)}>Close</button>
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -3022,6 +3204,66 @@ function statusQuoLines(text) {
     .split(/\r?\n/)
     .map((line) => line.trim().replace(/^-+\s*/, ""))
     .filter(Boolean);
+}
+
+function openActionsFilename(property) {
+  return `${safeFilePart(property?.name || "Property")} - Open Actions.md`;
+}
+
+function findOpenActionsFile(files, property) {
+  const expected = openActionsFilename(property).toLowerCase();
+  const propertyKey = normaliseStatusQuoName(property?.name || "");
+  return (files || []).find((file) => file.name.toLowerCase() === expected)
+    || (files || []).find((file) => openActionsFileMatchesProperty(file, propertyKey))
+    || null;
+}
+
+function openActionsFileMatchesProperty(file, propertyKey) {
+  const fileKey = normaliseStatusQuoName(String(file?.name || "").replace(/open\s*actions/gi, ""));
+  const buildingKey = normaliseStatusQuoName(extractStatusQuoBuilding(file?.text || ""));
+  return statusQuoNameMatches(fileKey, propertyKey) || statusQuoNameMatches(buildingKey, propertyKey);
+}
+
+function openActionsFrontmatter(property) {
+  return `---\nclient: "[[Union]]"\nbuilding: ${yamlQuote(property?.name || "")}\nteamBucket: "[[SavIQ]]"\ncreated: ${todayIso()}\nnoteType: "[[OpenActions]]"\n---`;
+}
+
+function parseOpenActionsMarkdown(text, property) {
+  const source = String(text || "");
+  const frontmatterMatch = source.match(/^---\s*\n[\s\S]*?\n---\s*/);
+  const frontmatter = frontmatterMatch?.[0]?.trim() || openActionsFrontmatter(property);
+  const actions = [];
+  const lines = source.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = lines[i].match(/^\s*-\s*\[\s*([xX]?)\s*\]\s+(.+?)\s*$/);
+    if (!match) continue;
+    let comment = "";
+    const next = lines[i + 1] || "";
+    const commentMatch = next.match(/^\s*comment:\s*(.+?)\s*$/i);
+    if (commentMatch) {
+      comment = commentMatch[1];
+      i += 1;
+    }
+    actions.push({ done: Boolean(match[1]), text: normaliseActionText(match[2]), comment });
+  }
+  return { frontmatter, actions };
+}
+
+function normaliseActionText(text) {
+  return String(text || "")
+    .replace(/^\s*-\s*\[\s*[xX]?\s*\]\s*/, "")
+    .replace(/^comment:\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildOpenActionsMarkdown(frontmatter, actions) {
+  const body = (actions || []).map((action) => {
+    const checkbox = action.done ? "[x]" : "[ ]";
+    const comment = action.done && action.comment ? `\ncomment: ${String(action.comment).replace(/\r?\n/g, " ").trim()}` : "";
+    return `- ${checkbox} ${normaliseActionText(action.text)}${comment}`;
+  }).join("\n\n");
+  return `${frontmatter.trim()}\n\n# Open Actions\n\n${body}\n`;
 }
 
 function dataViewYears(rows = []) {

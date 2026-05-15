@@ -73,7 +73,7 @@ const NAV = [
   ["crrem", "🌍 CRREM Plot"],
   ["meetings", "📝 Monthly Meetings"],
   ["reports", "📤 Reports"],
-  ["statusquo", "Status Quo"],
+  ["statusquo", "\u{1F4CD} Status Quo"],
   ["benchmark", "\u{1F3C1} Benchmark"],
   ["database", "🧪 SQLite Lab"],
   ["admin", "🛡️ Database Admin"]
@@ -2968,6 +2968,7 @@ function normaliseStatusQuoName(value) {
     .replace(/\.md$/i, "")
     .replace(/status\s*quo/g, "")
     .replace(/\bstreet\b/g, "st")
+    .replace(/\bblue\b/g, "blu")
     .replace(/\b(building|tower|property|main|notes|work|db)\b/g, "")
     .replace(/[^a-z0-9]+/g, "");
   return text;

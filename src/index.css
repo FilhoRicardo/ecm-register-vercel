@@ -547,6 +547,9 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
   min-height: 0;
   padding-right: 8px;
 }
+.open-actions-filter {
+  margin-bottom: 12px;
+}
 .open-action-item {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr);
@@ -575,6 +578,20 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
   display: block;
   color: #f8fafc;
   line-height: 1.4;
+}
+.open-action-responsible {
+  display: inline-flex;
+  width: fit-content;
+  margin-bottom: 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(34,211,238,0.26);
+  background: rgba(34,211,238,0.08);
+  color: #bae6fd;
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 .open-action-comment {
   color: #94a3b8;

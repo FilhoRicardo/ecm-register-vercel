@@ -81,6 +81,14 @@ const NAV = [
   ["admin", "🛡️ Database Admin"]
 ];
 
+const RESPONSIBLE_OPTIONS = [
+  "Property Manager",
+  "Asset Manager",
+  "BMS Company",
+  "Metering Company",
+  "SavIQ team"
+];
+
 const EMPTY_ECM = {
   property_id: "",
   ref: "",
@@ -2293,6 +2301,8 @@ function OpenActionsView({ ready, properties, selectedPropertyId, setSelectedPro
   const [frontmatter, setFrontmatter] = useState("");
   const [filename, setFilename] = useState("");
   const [newAction, setNewAction] = useState("");
+  const [newResponsible, setNewResponsible] = useState(RESPONSIBLE_OPTIONS[0]);
+  const [responsibleFilter, setResponsibleFilter] = useState("All");
   const [comments, setComments] = useState({});
   const [loading, setLoading] = useState(false);
 
@@ -2344,7 +2354,7 @@ function OpenActionsView({ ready, properties, selectedPropertyId, setSelectedPro
     }
     setLoading(true);
     try {
-      await writeActions([...actions, { text, done: false, comment: "" }]);
+      await writeActions([...actions, { text, responsible: newResponsible, done: false, comment: "" }]);
       setNewAction("");
       notify("Open action saved.");
     } catch (error) {
@@ -2402,6 +2412,11 @@ function OpenActionsView({ ready, properties, selectedPropertyId, setSelectedPro
               <Field label="New open item" help="Saved as an Obsidian checklist item: - [ ] action text">
                 <textarea className="open-actions-textarea" value={newAction} onChange={(event) => setNewAction(event.target.value)} placeholder="Add the action text..." />
               </Field>
+              <Field label="Responsible">
+                <select value={newResponsible} onChange={(event) => setNewResponsible(event.target.value)}>
+                  {RESPONSIBLE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+                </select>
+              </Field>
               <div className="toolbar">
                 <button className="btn primary" disabled={loading}>{loading ? "Saving..." : "Add Open Item"}</button>
                 <button className="btn" type="button" onClick={() => setNewAction("")}>Clear</button>
@@ -2416,7 +2431,14 @@ function OpenActionsView({ ready, properties, selectedPropertyId, setSelectedPro
                 <p className="muted">{openCount} open, {closedCount} closed.</p>
               </div>
             </div>
-            <OpenActionsList actions={actions} comments={comments} setComments={setComments} closeAction={closeAction} loading={loading} />
+            <Field label="Filter by responsible" className="open-actions-filter">
+              <select value={responsibleFilter} onChange={(event) => setResponsibleFilter(event.target.value)}>
+                <option value="All">All</option>
+                <option value="Unassigned">Unassigned</option>
+                {RESPONSIBLE_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}
+              </select>
+            </Field>
+            <OpenActionsList actions={actions} responsibleFilter={responsibleFilter} comments={comments} setComments={setComments} closeAction={closeAction} loading={loading} />
           </div>
         </div>
       )}
@@ -2523,8 +2545,11 @@ function StatusQuoTimeline({ entries }) {
   );
 }
 
-function OpenActionsList({ actions, comments, setComments, closeAction, loading }) {
-  const sorted = [...(actions || [])].map((action, index) => ({ ...action, index })).sort((a, b) => Number(a.done) - Number(b.done));
+function OpenActionsList({ actions, responsibleFilter, comments, setComments, closeAction, loading }) {
+  const sorted = [...(actions || [])]
+    .map((action, index) => ({ ...action, index, responsible: normaliseResponsible(action.responsible) }))
+    .filter((action) => responsibleFilter === "All" || action.responsible === responsibleFilter)
+    .sort((a, b) => Number(a.done) - Number(b.done));
   if (!sorted.length) return <p className="muted">Add the first open action from the left panel.</p>;
   return (
     <div className="open-actions-list">
@@ -2532,6 +2557,7 @@ function OpenActionsList({ actions, comments, setComments, closeAction, loading 
         <div className={`open-action-item ${action.done ? "is-done" : ""}`} key={`${action.index}-${action.text}`}>
           <div className="open-action-check">{action.done ? "✓" : ""}</div>
           <div className="open-action-body">
+            <span className="open-action-responsible">{action.responsible}</span>
             <strong>{action.text}</strong>
             {action.done ? (
               <p className="open-action-comment">{action.comment ? `comment: ${action.comment}` : "comment: closed without comment"}</p>
@@ -3238,13 +3264,22 @@ function parseOpenActionsMarkdown(text, property) {
     const match = lines[i].match(/^\s*-\s*\[\s*([xX]?)\s*\]\s+(.+?)\s*$/);
     if (!match) continue;
     let comment = "";
-    const next = lines[i + 1] || "";
-    const commentMatch = next.match(/^\s*comment:\s*(.+?)\s*$/i);
-    if (commentMatch) {
-      comment = commentMatch[1];
-      i += 1;
+    let responsible = "";
+    for (let j = i + 1; j < lines.length; j += 1) {
+      if (/^\s*-\s*\[\s*[xX]?\s*\]\s+/.test(lines[j])) break;
+      const commentMatch = lines[j].match(/^\s*comment:\s*(.+?)\s*$/i);
+      const responsibleMatch = lines[j].match(/^\s*responsible:\s*(.+?)\s*$/i);
+      if (commentMatch) {
+        comment = commentMatch[1];
+        i = j;
+      } else if (responsibleMatch) {
+        responsible = responsibleMatch[1];
+        i = j;
+      } else if (String(lines[j] || "").trim()) {
+        break;
+      }
     }
-    actions.push({ done: Boolean(match[1]), text: normaliseActionText(match[2]), comment });
+    actions.push({ done: Boolean(match[1]), text: normaliseActionText(match[2]), responsible: normaliseResponsible(responsible), comment });
   }
   return { frontmatter, actions };
 }
@@ -3257,11 +3292,18 @@ function normaliseActionText(text) {
     .trim();
 }
 
+function normaliseResponsible(value) {
+  const text = String(value || "").trim();
+  return RESPONSIBLE_OPTIONS.includes(text) ? text : "Unassigned";
+}
+
 function buildOpenActionsMarkdown(frontmatter, actions) {
   const body = (actions || []).map((action) => {
     const checkbox = action.done ? "[x]" : "[ ]";
+    const responsible = normaliseResponsible(action.responsible);
+    const responsibleLine = responsible !== "Unassigned" ? `\nresponsible: ${responsible}` : "";
     const comment = action.done && action.comment ? `\ncomment: ${String(action.comment).replace(/\r?\n/g, " ").trim()}` : "";
-    return `- ${checkbox} ${normaliseActionText(action.text)}${comment}`;
+    return `- ${checkbox} ${normaliseActionText(action.text)}${responsibleLine}${comment}`;
   }).join("\n\n");
   return `${frontmatter.trim()}\n\n# Open Actions\n\n${body}\n`;
 }

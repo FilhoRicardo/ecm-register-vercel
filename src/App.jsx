@@ -2937,10 +2937,40 @@ function safeFilePart(value) {
 
 function findStatusQuoFile(files, property) {
   const expected = statusQuoFilename(property).toLowerCase();
-  const propertyKey = safeFilePart(property?.name || "").toLowerCase();
+  const propertyKey = normaliseStatusQuoName(property?.name || "");
   return (files || []).find((file) => file.name.toLowerCase() === expected)
-    || (files || []).find((file) => file.name.toLowerCase().includes(propertyKey) && file.name.toLowerCase().includes("status quo"))
+    || (files || []).find((file) => statusQuoFileMatchesProperty(file, propertyKey))
     || null;
+}
+
+function statusQuoFileMatchesProperty(file, propertyKey) {
+  const fileKey = normaliseStatusQuoName(file?.name || "");
+  const buildingKey = normaliseStatusQuoName(extractStatusQuoBuilding(file?.text || ""));
+  return statusQuoNameMatches(fileKey, propertyKey) || statusQuoNameMatches(buildingKey, propertyKey);
+}
+
+function statusQuoNameMatches(left, right) {
+  if (!left || !right) return false;
+  if (left === right) return true;
+  return left.length > 2 && right.length > 2 && (left.includes(right) || right.includes(left));
+}
+
+function extractStatusQuoBuilding(text) {
+  const match = String(text || "").match(/^building:\s*(.+)$/m);
+  return match ? match[1] : "";
+}
+
+function normaliseStatusQuoName(value) {
+  let text = String(value || "").toLowerCase();
+  const wiki = text.match(/\[\[(?:.*\/)?([^|\]]+)(?:\|([^\]]+))?\]\]/);
+  if (wiki) text = wiki[2] || wiki[1];
+  text = text
+    .replace(/\.md$/i, "")
+    .replace(/status\s*quo/g, "")
+    .replace(/\bstreet\b/g, "st")
+    .replace(/\b(building|tower|property|main|notes|work|db)\b/g, "")
+    .replace(/[^a-z0-9]+/g, "");
+  return text;
 }
 
 function parseStatusQuoMarkdown(text, property) {

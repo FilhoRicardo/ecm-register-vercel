@@ -182,6 +182,60 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
   padding: 11px 12px;
   margin-top: 12px;
 }
+.workflow-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.workflow-guide-card {
+  display: grid;
+  gap: 12px;
+}
+.workflow-guide-head {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+.workflow-guide-head > span {
+  width: 58px;
+  height: 58px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: linear-gradient(135deg, rgba(124,58,237,0.9), rgba(59,130,246,0.8));
+  border: 1px solid rgba(167,139,250,0.42);
+  font-size: 12px;
+  font-weight: 900;
+}
+.workflow-guide-head h3 { margin: 0; }
+.workflow-guide-head p {
+  margin: 4px 0 0;
+  color: #94a3b8;
+  font-size: 12px;
+}
+.workflow-guide-card ol {
+  margin: 0;
+  padding-left: 20px;
+  color: #dbeafe;
+  line-height: 1.55;
+}
+.workflow-output-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.workflow-output-list span {
+  border: 1px solid rgba(34,211,238,0.22);
+  border-radius: 999px;
+  color: #bae6fd;
+  background: rgba(34,211,238,0.07);
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 800;
+}
 .setup-screen {
   min-height: calc(100vh - 150px);
   display: grid;
@@ -609,6 +663,45 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
   min-height: 58px;
   resize: vertical;
 }
+.admin-tracker-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.58fr) minmax(0, 1.42fr);
+  gap: 14px;
+  align-items: start;
+}
+.admin-deliverable-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0;
+}
+.admin-deliverable-list label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #dbeafe;
+  background: rgba(255,255,255,0.025);
+  font-weight: 800;
+}
+.admin-tracker-table-card {
+  min-height: 420px;
+}
+.tracker-check {
+  border: 1px solid rgba(239,68,68,0.24);
+  color: #fecaca;
+  background: rgba(239,68,68,0.08);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 900;
+}
+.tracker-check.is-done {
+  border-color: rgba(34,197,94,0.32);
+  color: #bbf7d0;
+  background: rgba(34,197,94,0.12);
+}
 .field { display: grid; gap: 5px; margin-bottom: 11px; }
 .field label { font-size: 10px; text-transform: uppercase; font-weight: 900; color: #64748b; letter-spacing: 0.08em; }
 .field-help {
@@ -1026,6 +1119,9 @@ tr:hover td { background: rgba(124,58,237,0.055); }
   .folder-row { align-items: flex-start; flex-direction: column; }
   .folder-actions { width: 100%; justify-content: flex-end; }
   .welcome-grid { grid-template-columns: 1fr; }
+  .workflow-guide-grid,
+  .admin-tracker-grid { grid-template-columns: 1fr; }
+  .workflow-guide-head { grid-template-columns: 1fr; }
   .data-view-grid,
   .benchmark-grid { grid-template-columns: 1fr; }
   .status-quo-grid { grid-template-columns: 1fr; }

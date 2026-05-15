@@ -56,7 +56,8 @@ export function getPortfolio(db) {
   const monthlyUsage = getMonthlyUsage(db);
   const tenants = getTenants(db);
   const equipment = getEquipment(db);
-  return { properties, ecms, implementedSavings, monthlyUsage, tenants, equipment };
+  const adminTracker = getAdminTracker(db);
+  return { properties, ecms, implementedSavings, monthlyUsage, tenants, equipment, adminTracker };
 }
 
 export function getProperties(db) {
@@ -320,6 +321,61 @@ export function upsertMonthlyUsage(db, input) {
 
 export function deleteMonthlyUsage(db, id) {
   db.run("DELETE FROM monthly_utility_usage WHERE id = ?", [id]);
+}
+
+export function getAdminTracker(db, propertyId = null) {
+  return rows(
+    db,
+    `SELECT a.*, p.name AS property_name
+     FROM monthly_admin_tracker a
+     JOIN properties p ON p.id = a.property_id
+     ${propertyId ? "WHERE a.property_id = ?" : ""}
+     ORDER BY p.name, a.admin_year DESC`,
+    propertyId ? [propertyId] : []
+  ).map((row) => ({
+    ...row,
+    docunite_report: Boolean(row.docunite_report),
+    ecm_report: Boolean(row.ecm_report),
+    status_quo: Boolean(row.status_quo),
+    pre_meeting_notes: Boolean(row.pre_meeting_notes),
+    post_meeting_notes: Boolean(row.post_meeting_notes)
+  }));
+}
+
+export function upsertAdminTracker(db, input) {
+  const existing = one(
+    db,
+    "SELECT id FROM monthly_admin_tracker WHERE property_id=? AND admin_year=?",
+    [input.property_id, input.admin_year]
+  );
+  const params = [
+    input.property_id,
+    Number(input.admin_year),
+    input.docunite_report ? 1 : 0,
+    input.ecm_report ? 1 : 0,
+    input.status_quo ? 1 : 0,
+    input.pre_meeting_notes ? 1 : 0,
+    input.post_meeting_notes ? 1 : 0,
+    input.comments || ""
+  ];
+  if (existing) {
+    db.run(
+      `UPDATE monthly_admin_tracker
+       SET property_id=?, admin_year=?, docunite_report=?, ecm_report=?, status_quo=?,
+           pre_meeting_notes=?, post_meeting_notes=?, comments=?, updated_at=CURRENT_TIMESTAMP
+       WHERE id=?`,
+      [...params, existing.id]
+    );
+    return existing.id;
+  }
+  db.run(
+    `INSERT INTO monthly_admin_tracker (
+      property_id, admin_year, docunite_report, ecm_report, status_quo,
+      pre_meeting_notes, post_meeting_notes, comments, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    params
+  );
+  return Number(one(db, "SELECT last_insert_rowid() AS id").id);
 }
 
 export function tableCount(db, table) {

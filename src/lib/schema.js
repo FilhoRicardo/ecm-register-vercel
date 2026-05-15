@@ -133,6 +133,22 @@ CREATE TABLE IF NOT EXISTS ecm_measured_savings (
   FOREIGN KEY (ecm_id) REFERENCES ecms(id) ON DELETE CASCADE,
   FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS monthly_admin_tracker (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  property_id INTEGER NOT NULL,
+  admin_year INTEGER NOT NULL,
+  docunite_report INTEGER NOT NULL DEFAULT 0,
+  ecm_report INTEGER NOT NULL DEFAULT 0,
+  status_quo INTEGER NOT NULL DEFAULT 0,
+  pre_meeting_notes INTEGER NOT NULL DEFAULT 0,
+  post_meeting_notes INTEGER NOT NULL DEFAULT 0,
+  comments TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE,
+  UNIQUE (property_id, admin_year)
+);
 `;
 
 const MIGRATIONS = [

@@ -25,6 +25,7 @@ import {
   tableCount,
   upsertEcm,
   upsertEquipment,
+  upsertAdminTracker,
   upsertImplementedSaving,
   upsertMonthlyUsage,
   upsertProperty,
@@ -63,6 +64,7 @@ const FOLDERS = [
 
 const NAV = [
   ["welcome", "👋 Welcome"],
+  ["workflow", "\u{1F5D3}\u{FE0F} Workflow Guide"],
   ["setup", "⚙️ Setup"],
   ["dashboard", "🎯 Dashboard"],
   ["properties", "🏢 Properties"],
@@ -76,6 +78,7 @@ const NAV = [
   ["reports", "📤 Reports"],
   ["statusquo", "\u{1F4CD} Status Quo"],
   ["actions", "\u{2611}\u{FE0F} Open Actions"],
+  ["admintracker", "\u{1F5C2}\u{FE0F} Admin Tracker"],
   ["benchmark", "\u{1F3C1} Benchmark"],
   ["database", "🧪 SQLite Lab"],
   ["admin", "🛡️ Database Admin"]
@@ -87,6 +90,14 @@ const RESPONSIBLE_OPTIONS = [
   "BMS Company",
   "Metering Company",
   "SavIQ team"
+];
+
+const ADMIN_DELIVERABLES = [
+  ["docunite_report", "Docunite report"],
+  ["ecm_report", "ECM report"],
+  ["status_quo", "Status Quo"],
+  ["pre_meeting_notes", "Pre Meeting notes"],
+  ["post_meeting_notes", "Post meeting notes"]
 ];
 
 const EMPTY_ECM = {
@@ -156,6 +167,7 @@ export default function App() {
   const [calcFile, setCalcFile] = useState(null);
   const [savingForm, setSavingForm] = useState(defaultSavingForm());
   const [usageForm, setUsageForm] = useState(defaultUsageForm());
+  const [adminForm, setAdminForm] = useState(defaultAdminTrackerForm());
   const [meetingForm, setMeetingForm] = useState({ property_id: "", report_month: todayIso().slice(0, 7), meeting_date: todayIso(), pre: "" });
   const [meetingFiles, setMeetingFiles] = useState([]);
   const [selectedMeetingName, setSelectedMeetingName] = useState("");
@@ -185,6 +197,7 @@ export default function App() {
     setTenantForm((prev) => ({ ...prev, property_id: prev.property_id || first }));
     setEquipmentForm((prev) => ({ ...prev, property_id: prev.property_id || first }));
     setUsageForm((prev) => ({ ...prev, property_id: prev.property_id || first }));
+    setAdminForm((prev) => ({ ...prev, property_id: prev.property_id || first }));
   }, [data?.properties]);
 
   const properties = data?.properties || [];
@@ -435,6 +448,18 @@ export default function App() {
     if (!window.confirm("Delete this monthly usage record?")) return;
     deleteMonthlyUsage(db, id);
     await persist("Monthly usage deleted.");
+  }
+
+  async function saveAdminTracker(event, override = {}) {
+    event?.preventDefault?.();
+    const next = { ...adminForm, ...override };
+    upsertAdminTracker(db, {
+      ...next,
+      property_id: Number(next.property_id),
+      admin_year: Number(next.admin_year)
+    });
+    setAdminForm((prev) => ({ ...prev, ...next }));
+    await persist("Admin tracker saved.");
   }
 
   async function syncObsidianNotes() {
@@ -845,6 +870,7 @@ export default function App() {
         </div>
 
         {active === "welcome" && <WelcomeView ready={ready} />}
+        {active === "workflow" && <WorkflowGuideView />}
         {active === "setup" && (
           <SetupView
             handles={handles}
@@ -1012,6 +1038,16 @@ export default function App() {
             notify={notify}
           />
         )}
+        {active === "admintracker" && (
+          <AdminTrackerView
+            ready={ready}
+            properties={properties}
+            records={data?.adminTracker || []}
+            form={adminForm}
+            setForm={setAdminForm}
+            save={saveAdminTracker}
+          />
+        )}
         {active === "database" && <DatabaseView ready={ready} db={db} sqlText={sqlText} setSqlText={setSqlText} runSql={runSql} sqlRows={sqlRows} />}
         {active === "admin" && (
           <DatabaseAdminView
@@ -1048,6 +1084,7 @@ function WelcomeView({ ready }) {
     ["Monthly meeting notes", "Monthly Meeting Notes folder", "Meeting notes are Markdown files in Obsidian. The app creates and edits the pre/post meeting sections."],
     ["Status quo timelines", "Status Quo folder", "Property status updates are Markdown files in Obsidian. The app adds or edits one month section per property."],
     ["Open actions", "Open Actions folder", "Property action lists are Markdown checklist files in Obsidian. The app creates open items and closes them with comments."],
+    ["Admin tracker", "SQLite database", "Annual deliverable status by property: Docunite report, ECM report, Status Quo, pre-meeting notes, and post-meeting notes."],
     ["Calculation evidence", "Calculation Files folder", "Uploaded calculation files are renamed and routed locally for traceability."],
     ["Reports", "Browser download / optional Reports folder", "Excel registers, usage CSV/Excel, ECM review workbooks, PPTX reports, and CRREM PDFs are exported locally."],
     ["Database admin", "SQLite database + backup download", "Backups and database checks operate on the local SQLite file."]
@@ -1109,6 +1146,91 @@ function WelcomeView({ ready }) {
             </tbody>
           </table>
         </div>
+      </div>
+    </section>
+  );
+}
+
+function WorkflowGuideView() {
+  const weeks = [
+    {
+      week: "Week 1",
+      title: "Data Review And Meeting Prep",
+      tone: "Find the story in the data before the month gets busy.",
+      steps: [
+        "Review the latest data in SavIQ.",
+        "Open the Open Actions tab and review existing actions.",
+        "Pay extra attention to data-review actions, missing data, zero readings, and abnormal patterns.",
+        "Go to Monthly Meetings and initiate the monthly meeting note.",
+        "Add all findings into the pre-meeting notes section."
+      ],
+      outputs: ["Updated open actions", "New monthly meeting note", "Pre-meeting findings captured"]
+    },
+    {
+      week: "Week 2",
+      title: "BMS Company Meetings",
+      tone: "Use the action list as the agenda.",
+      steps: [
+        "Filter Open Actions by BMS Company.",
+        "Discuss each relevant action with the BMS company.",
+        "Add closing comments where actions are resolved.",
+        "Close completed actions and create new actions where follow-up is needed."
+      ],
+      outputs: ["BMS actions updated", "Closed actions have comments", "New control actions created"]
+    },
+    {
+      week: "Week 3",
+      title: "Admin, Consumption, And Client Outputs",
+      tone: "Make sure the monthly evidence pack is complete.",
+      steps: [
+        "Use Admin Tracker to mark property deliverables by year.",
+        "Add the past month consumption in Monthly Usage.",
+        "Update Status Quo where the property story changed.",
+        "Export or send the CRREM plot and Benchmark view to the client.",
+        "Check that Docunite report, ECM report, pre-meeting notes, and post-meeting notes are tracked."
+      ],
+      outputs: ["Monthly consumption entered", "Admin Tracker updated", "CRREM and Benchmark ready for client"]
+    },
+    {
+      week: "Week 4",
+      title: "Meeting And Post-Meeting Notes",
+      tone: "Close the loop while the meeting is still fresh.",
+      steps: [
+        "Run the monthly meeting.",
+        "Open the existing Monthly Meeting note.",
+        "Add post-meeting comments only.",
+        "Review Open Actions and assign responsible owners for next month.",
+        "Confirm whether any Status Quo or ECM records need updating."
+      ],
+      outputs: ["Post-meeting notes saved", "Next actions assigned", "Monthly cycle ready to repeat"]
+    }
+  ];
+  return (
+    <section className="section">
+      <div className="section-head">
+        <div>
+          <h3>Project Timeline Guide</h3>
+          <p className="muted">A static monthly workflow to keep the project running consistently.</p>
+        </div>
+      </div>
+      <div className="workflow-guide-grid">
+        {weeks.map((item) => (
+          <div className="card workflow-guide-card" key={item.week}>
+            <div className="workflow-guide-head">
+              <span>{item.week}</span>
+              <div>
+                <h3>{item.title}</h3>
+                <p>{item.tone}</p>
+              </div>
+            </div>
+            <ol>
+              {item.steps.map((step) => <li key={step}>{step}</li>)}
+            </ol>
+            <div className="workflow-output-list">
+              {item.outputs.map((output) => <span key={output}>{output}</span>)}
+            </div>
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -2446,9 +2568,97 @@ function OpenActionsView({ ready, properties, selectedPropertyId, setSelectedPro
   );
 }
 
+function AdminTrackerView({ ready, properties, records, form, setForm, save }) {
+  if (!ready) return <EmptyState />;
+  const selectedPropertyId = Number(form.property_id || properties[0]?.id || "");
+  const propertyRecords = (records || []).filter((record) => record.property_id === selectedPropertyId);
+  const sortedRecords = [...propertyRecords].sort((a, b) => Number(b.admin_year) - Number(a.admin_year));
+  const set = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
+  const editRecord = (record) => {
+    setForm({
+      ...record,
+      property_id: String(record.property_id),
+      admin_year: String(record.admin_year),
+      comments: record.comments || ""
+    });
+  };
+  async function toggleDeliverable(record, key) {
+    await save(null, { ...record, [key]: !record[key] });
+  }
+  return (
+    <section className="section">
+      <div className="section-head">
+        <div>
+          <h3>Admin Tracker</h3>
+          <p className="muted">Lightweight annual deliverable tracker stored only in the SQLite database.</p>
+        </div>
+      </div>
+      <div className="admin-tracker-grid">
+        <div className="card">
+          <form onSubmit={save}>
+            <Field label="Property">
+              <select value={selectedPropertyId || ""} onChange={(event) => set("property_id", event.target.value)}>
+                {properties.map((property) => <option key={property.id} value={property.id}>{property.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Year">
+              <input type="number" min="2024" max="2050" value={form.admin_year} onChange={(event) => set("admin_year", event.target.value)} />
+            </Field>
+            <Field label="Comments">
+              <textarea value={form.comments} onChange={(event) => set("comments", event.target.value)} placeholder="Admin context, blockers, or handover notes..." />
+            </Field>
+            <div className="admin-deliverable-list">
+              {ADMIN_DELIVERABLES.map(([key, label]) => (
+                <label key={key}>
+                  <input type="checkbox" checked={Boolean(form[key])} onChange={(event) => set(key, event.target.checked)} />
+                  <span>{label}</span>
+                </label>
+              ))}
+            </div>
+            <div className="toolbar">
+              <button className="btn primary">Save Admin Row</button>
+              <button className="btn" type="button" onClick={() => setForm({ ...defaultAdminTrackerForm(), property_id: String(selectedPropertyId || "") })}>New Year</button>
+            </div>
+          </form>
+        </div>
+        <div className="card admin-tracker-table-card">
+          <h3>{properties.find((property) => property.id === selectedPropertyId)?.name || "Property"} Deliverables</h3>
+          <div style={{ overflow: "auto" }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Year</th>
+                  {ADMIN_DELIVERABLES.map(([, label]) => <th key={label}>{label}</th>)}
+                  <th>Comments</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedRecords.map((record) => (
+                  <tr key={record.id} onClick={() => editRecord(record)} style={{ cursor: "pointer" }}>
+                    <td><strong>{record.admin_year}</strong></td>
+                    {ADMIN_DELIVERABLES.map(([key]) => (
+                      <td key={key} onClick={(event) => event.stopPropagation()}>
+                        <button className={`tracker-check ${record[key] ? "is-done" : ""}`} type="button" onClick={() => toggleDeliverable(record, key)}>
+                          {record[key] ? "Done" : "Open"}
+                        </button>
+                      </td>
+                    ))}
+                    <td>{record.comments || ""}</td>
+                  </tr>
+                ))}
+                {!sortedRecords.length ? <tr><td colSpan={ADMIN_DELIVERABLES.length + 2} className="muted">No admin tracker rows for this property yet.</td></tr> : null}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function DatabaseView({ ready, db, sqlText, setSqlText, runSql, sqlRows }) {
   if (!ready) return <EmptyState />;
-  const tables = ["properties", "tenants", "equipment", "ecms", "monthly_utility_usage", "ecm_measured_savings", "ecm_attachments"];
+  const tables = ["properties", "tenants", "equipment", "ecms", "monthly_utility_usage", "monthly_admin_tracker", "ecm_measured_savings", "ecm_attachments"];
   return (
     <section className="section">
       <h3>Database</h3>
@@ -3413,6 +3623,20 @@ function EmptyState() {
 
 function defaultSavingForm() {
   return { id: "", ecm_id: "", property_id: "", utility_type: "electricity", start_date: todayIso(), end_date: todayIso(), energy_saving_kwh: "", unit_cost_eur_per_kwh: "", notes: "" };
+}
+
+function defaultAdminTrackerForm() {
+  return {
+    id: "",
+    property_id: "",
+    admin_year: String(new Date().getFullYear()),
+    docunite_report: false,
+    ecm_report: false,
+    status_quo: false,
+    pre_meeting_notes: false,
+    post_meeting_notes: false,
+    comments: ""
+  };
 }
 
 function defaultUsageForm() {

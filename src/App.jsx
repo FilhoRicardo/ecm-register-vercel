@@ -34,7 +34,7 @@ import { downloadBlob, ensurePermission, idbDel, idbGet, idbSet, permissionState
 import { listMarkdownFiles, routeCalculationFile, writeTextIntoFolder } from "./lib/files.js";
 import { buildEcmMarkdown, buildMeetingMarkdown, buildSavingMarkdown, ecmFilename, extractMeetingSections, meetingFilename, replaceMeetingSections, savingFilename } from "./lib/markdown.js";
 import { downloadCrremPdfReport, downloadEcmReviewWorkbook, downloadExcelRegister, downloadPptxRegister, downloadUsageCsv, downloadUsageWorkbook, parseEcmReviewWorkbook } from "./lib/reports.js";
-import { EQUIPMENT_TYPE_TO_BRICK_CLASS, kwh, money, todayIso, utilityCost } from "./lib/format.js";
+import { EQUIPMENT_TYPE_TO_BRICK_CLASS, kwh, money, todayIso, utilityCost, yamlQuote } from "./lib/format.js";
 import {
   buildCrremAnalysis,
   CRREM_COUNTRIES,
@@ -54,6 +54,7 @@ const FOLDERS = [
   { key: "ecmNotes", label: "ECM Notes", required: true, description: "Obsidian folder for ECM Markdown files" },
   { key: "savingNotes", label: "Implemented Savings Notes", required: true, description: "Obsidian folder where implemented saving Markdown files are written" },
   { key: "meetingNotes", label: "Meeting Notes", required: true, description: "Obsidian folder for monthly meeting notes" },
+  { key: "statusQuo", label: "Status Quo", required: false, description: "Obsidian folder for property status quo timeline Markdown files" },
   { key: "calculationFiles", label: "Calculations", required: true, description: "Local folder for ECM calculation evidence" },
   { key: "reports", label: "Reports", required: false, description: "Optional folder for generated reports" },
   { key: "imports", label: "Imports", required: false, description: "Optional folder for source import files" }
@@ -72,6 +73,7 @@ const NAV = [
   ["crrem", "🌍 CRREM Plot"],
   ["meetings", "📝 Monthly Meetings"],
   ["reports", "📤 Reports"],
+  ["statusquo", "Status Quo"],
   ["benchmark", "\u{1F3C1} Benchmark"],
   ["database", "🧪 SQLite Lab"],
   ["admin", "🛡️ Database Admin"]
@@ -976,6 +978,18 @@ export default function App() {
             busy={busy}
           />
         )}
+        {active === "statusquo" && (
+          <StatusQuoView
+            ready={ready}
+            properties={properties}
+            selectedPropertyId={selectedPropertyId}
+            setSelectedPropertyId={setSelectedPropertyId}
+            folderHandle={handles.statusQuo}
+            folderStatus={folderStatuses.statusQuo}
+            configureFolder={() => configureFolder("statusQuo")}
+            notify={notify}
+          />
+        )}
         {active === "database" && <DatabaseView ready={ready} db={db} sqlText={sqlText} setSqlText={setSqlText} runSql={runSql} sqlRows={sqlRows} />}
         {active === "admin" && (
           <DatabaseAdminView
@@ -999,7 +1013,7 @@ function WelcomeView({ ready }) {
     ["1", "Setup folders", "Connect the local database folder, Obsidian note folders, calculation evidence folder, and optional report/import folders."],
     ["2", "Import or resume database", "Open ecm_register.db from your selected database folder or import an existing SQLite database into that folder."],
     ["3", "Register portfolio data", "Add properties, tenants, equipment, monthly consumption, ECMs, and implemented savings from the app."],
-    ["4", "Sync evidence", "ECM notes, implemented saving notes, meeting notes, and calculation files are written to your selected local folders."],
+    ["4", "Sync evidence", "ECM notes, implemented saving notes, meeting notes, status quo timelines, and calculation files are written to your selected local folders."],
     ["5", "Report and review", "Export Excel, CSV, PPTX, CRREM PDF, and ECM review workbooks from the Reports and Monthly Consumption pages."]
   ];
   const storageRows = [
@@ -1010,6 +1024,7 @@ function WelcomeView({ ready }) {
     ["Implemented savings", "SQLite database + Implemented Savings Notes folder", "Measured saving periods are stored in SQLite and written as Markdown notes in the implemented-savings folder."],
     ["Monthly consumption", "SQLite database", "Landlord and tenant monthly electricity, heating, and cooling values."],
     ["Monthly meeting notes", "Monthly Meeting Notes folder", "Meeting notes are Markdown files in Obsidian. The app creates and edits the pre/post meeting sections."],
+    ["Status quo timelines", "Status Quo folder", "Property status updates are Markdown files in Obsidian. The app adds or edits one month section per property."],
     ["Calculation evidence", "Calculation Files folder", "Uploaded calculation files are renamed and routed locally for traceability."],
     ["Reports", "Browser download / optional Reports folder", "Excel registers, usage CSV/Excel, ECM review workbooks, PPTX reports, and CRREM PDFs are exported locally."],
     ["Database admin", "SQLite database + backup download", "Backups and database checks operate on the local SQLite file."]
@@ -2123,6 +2138,139 @@ function ReportsView({ ready, db, properties, selectedProperty, setSelectedPrope
   );
 }
 
+function StatusQuoView({ ready, properties, selectedPropertyId, setSelectedPropertyId, folderHandle, folderStatus, configureFolder, notify }) {
+  const selectedId = Number(selectedPropertyId) || properties[0]?.id || "";
+  const property = properties.find((item) => item.id === Number(selectedId)) || properties[0] || null;
+  const now = new Date();
+  const [year, setYear] = useState(String(now.getFullYear()));
+  const [month, setMonth] = useState(String(now.getMonth() + 1).padStart(2, "0"));
+  const [text, setText] = useState("");
+  const [entries, setEntries] = useState([]);
+  const [frontmatter, setFrontmatter] = useState("");
+  const [filename, setFilename] = useState("");
+  const [loading, setLoading] = useState(false);
+  const selectedPeriod = `${year}/${month}`;
+
+  useEffect(() => {
+    if (!ready || !folderHandle || !property) return;
+    loadStatusQuo();
+  }, [ready, folderHandle, property?.id]);
+
+  useEffect(() => {
+    const existing = entries.find((entry) => entry.period === selectedPeriod);
+    setText(existing?.text || "");
+  }, [selectedPeriod, entries]);
+
+  async function loadStatusQuo() {
+    if (!folderHandle || !property) return;
+    setLoading(true);
+    try {
+      if (!(await ensurePermission(folderHandle, "readwrite"))) throw new Error("Status Quo folder permission was not granted.");
+      const files = await listMarkdownFiles(folderHandle);
+      const file = findStatusQuoFile(files, property);
+      const parsed = parseStatusQuoMarkdown(file?.text || "", property);
+      setEntries(parsed.entries);
+      setFrontmatter(parsed.frontmatter);
+      setFilename(file?.name || statusQuoFilename(property));
+    } catch (error) {
+      notify(error.message || String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveStatusQuo(event) {
+    event.preventDefault();
+    if (!folderHandle || !property) {
+      notify("Configure the Status Quo folder in Setup first.");
+      return;
+    }
+    setLoading(true);
+    try {
+      if (!(await ensurePermission(folderHandle, "readwrite"))) throw new Error("Status Quo folder permission was not granted.");
+      const normalised = normaliseStatusQuoText(text);
+      if (!normalised) throw new Error("Add status quo text before saving.");
+      const nextEntries = upsertStatusQuoEntry(entries, { period: selectedPeriod, text: normalised });
+      const nextFrontmatter = frontmatter || statusQuoFrontmatter(property);
+      const nextFilename = filename || statusQuoFilename(property);
+      await writeTextIntoFolder(folderHandle, nextFilename, buildStatusQuoMarkdown(nextFrontmatter, nextEntries));
+      setEntries(nextEntries);
+      setFrontmatter(nextFrontmatter);
+      setFilename(nextFilename);
+      notify(`Status quo saved to ${nextFilename}.`);
+    } catch (error) {
+      notify(error.message || String(error));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (!ready) return <EmptyState />;
+  return (
+    <section className="section">
+      <div className="section-head">
+        <div>
+          <h3>Status Quo</h3>
+          <p className="muted">Maintain one Obsidian Markdown timeline per property.</p>
+        </div>
+        <div className="toolbar">
+          <button className="btn" type="button" onClick={configureFolder}>{folderHandle ? "Change Folder" : "Select Folder"}</button>
+          <button className="btn" type="button" disabled={!folderHandle || loading} onClick={loadStatusQuo}>{loading ? "Loading..." : "Refresh"}</button>
+        </div>
+      </div>
+      {!folderHandle ? (
+        <div className="card">
+          <h3>Status Quo folder needed</h3>
+          <p className="muted">Select the Obsidian folder that contains files like `5 Keizers - Status Quo.md`.</p>
+          <button className="btn primary" type="button" onClick={configureFolder}>Select Status Quo Folder</button>
+        </div>
+      ) : (
+        <div className="status-quo-grid">
+          <div className="card status-quo-editor">
+            <form onSubmit={saveStatusQuo}>
+              <Field label="Property">
+                <select value={property?.id || ""} onChange={(event) => setSelectedPropertyId(event.target.value)}>
+                  {properties.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </select>
+              </Field>
+              <div className="grid two">
+                <Field label="Year">
+                  <input type="number" min="2020" max="2050" value={year} onChange={(event) => setYear(event.target.value)} />
+                </Field>
+                <Field label="Month">
+                  <select value={month} onChange={(event) => setMonth(event.target.value)}>
+                    {MONTH_LABELS.map((label, index) => {
+                      const value = String(index + 1).padStart(2, "0");
+                      return <option key={value} value={value}>{value} - {label}</option>;
+                    })}
+                  </select>
+                </Field>
+              </div>
+              <Field label="Status quo text" help="Write plain lines. The app saves each line as a bullet to match the existing notes.">
+                <textarea className="status-quo-textarea" value={text} onChange={(event) => setText(event.target.value)} placeholder="- Add current status, blockers, decisions, or next steps..." />
+              </Field>
+              <div className="toolbar">
+                <button className="btn primary" disabled={loading}>{loading ? "Saving..." : "Save Month"}</button>
+                <button className="btn" type="button" onClick={() => setText("")}>Clear Text</button>
+              </div>
+              <p className="muted">File: {filename || statusQuoFilename(property)}. Folder status: {folderStatus || "selected"}.</p>
+            </form>
+          </div>
+          <div className="card status-quo-timeline-card">
+            <div className="section-head">
+              <div>
+                <h3>{property?.name || "Property"} Timeline</h3>
+                <p className="muted">{entries.length ? `${entries.length} status updates loaded.` : "No status quo updates found yet."}</p>
+              </div>
+            </div>
+            <StatusQuoTimeline entries={entries} />
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function DatabaseView({ ready, db, sqlText, setSqlText, runSql, sqlRows }) {
   if (!ready) return <EmptyState />;
   const tables = ["properties", "tenants", "equipment", "ecms", "monthly_utility_usage", "ecm_measured_savings", "ecm_attachments"];
@@ -2195,6 +2343,29 @@ function SummaryTable({ title, rows }) {
         <thead><tr><th>Bucket</th><th>Count</th></tr></thead>
         <tbody>{rows.map((row) => <tr key={row.label}><td>{row.label}</td><td>{row.count}</td></tr>)}</tbody>
       </table>
+    </div>
+  );
+}
+
+function StatusQuoTimeline({ entries }) {
+  const sorted = [...(entries || [])].sort((a, b) => b.period.localeCompare(a.period));
+  if (!sorted.length) return <p className="muted">Select a month and save the first status update.</p>;
+  return (
+    <div className="status-quo-timeline">
+      {sorted.map((entry) => {
+        const [year, month] = entry.period.split("/");
+        return (
+          <div className="status-quo-item" key={entry.period}>
+            <div className="status-quo-date">
+              <strong>{month}</strong>
+              <span>{year}</span>
+            </div>
+            <div className="status-quo-bubble">
+              {statusQuoLines(entry.text).map((line, index) => <p key={`${entry.period}-${index}`}>{line}</p>)}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -2754,6 +2925,72 @@ function formatBenchmarkNumber(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "";
   return n.toLocaleString(undefined, { maximumFractionDigits: 1, minimumFractionDigits: 0 });
+}
+
+function statusQuoFilename(property) {
+  return `${safeFilePart(property?.name || "Property")} - Status Quo.md`;
+}
+
+function safeFilePart(value) {
+  return String(value || "Property").replace(/[<>:"/\\|?*]+/g, " ").replace(/\s+/g, " ").trim() || "Property";
+}
+
+function findStatusQuoFile(files, property) {
+  const expected = statusQuoFilename(property).toLowerCase();
+  const propertyKey = safeFilePart(property?.name || "").toLowerCase();
+  return (files || []).find((file) => file.name.toLowerCase() === expected)
+    || (files || []).find((file) => file.name.toLowerCase().includes(propertyKey) && file.name.toLowerCase().includes("status quo"))
+    || null;
+}
+
+function parseStatusQuoMarkdown(text, property) {
+  const source = String(text || "");
+  const frontmatterMatch = source.match(/^---\s*\n[\s\S]*?\n---\s*/);
+  const frontmatter = frontmatterMatch?.[0]?.trim() || statusQuoFrontmatter(property);
+  const entries = [];
+  const sectionPattern = /###\s+(\d{4})\/(\d{2})\s*\n([\s\S]*?)(?=\n---|\n###\s+\d{4}\/\d{2}|$)/g;
+  let match;
+  while ((match = sectionPattern.exec(source))) {
+    const body = match[3].replace(/\s+$/g, "");
+    entries.push({ period: `${match[1]}/${match[2]}`, text: body });
+  }
+  return { frontmatter, entries: sortStatusQuoEntries(entries) };
+}
+
+function statusQuoFrontmatter(property) {
+  return `---\nclient: "[[Union]]"\nbuilding: ${yamlQuote(property?.name || "")}\nteamBucket: "[[SavIQ]]"\ncreated: ${todayIso()}\nnoteType: "[[StatusQuo]]"\n---`;
+}
+
+function normaliseStatusQuoText(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.startsWith("- ") ? line : `- ${line.replace(/^-+/, "").trim()}`)
+    .join("\n");
+}
+
+function upsertStatusQuoEntry(entries, next) {
+  const existing = (entries || []).filter((entry) => entry.period !== next.period);
+  return sortStatusQuoEntries([...existing, next]);
+}
+
+function sortStatusQuoEntries(entries) {
+  return [...(entries || [])].sort((a, b) => a.period.localeCompare(b.period));
+}
+
+function buildStatusQuoMarkdown(frontmatter, entries) {
+  const body = sortStatusQuoEntries(entries)
+    .map((entry) => `### ${entry.period}\n${normaliseStatusQuoText(entry.text)}\n\n---`)
+    .join("\n\n");
+  return `${frontmatter.trim()}\n\n# Status Quo\n\n${body}\n`;
+}
+
+function statusQuoLines(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/^-+\s*/, ""))
+    .filter(Boolean);
 }
 
 function dataViewYears(rows = []) {

@@ -436,6 +436,81 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
   line-height: 1.45;
   white-space: pre-wrap;
 }
+.status-quo-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.72fr) minmax(0, 1.28fr);
+  gap: 14px;
+  align-items: stretch;
+}
+.status-quo-editor,
+.status-quo-timeline-card {
+  min-height: calc(100vh - 230px);
+}
+.status-quo-textarea {
+  min-height: clamp(260px, 42vh, 520px);
+}
+.status-quo-timeline {
+  display: grid;
+  gap: 18px;
+  padding: 4px 0 2px;
+}
+.status-quo-item {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  position: relative;
+}
+.status-quo-item::before {
+  content: "";
+  position: absolute;
+  left: 37px;
+  top: 74px;
+  bottom: -20px;
+  width: 1px;
+  background: rgba(124,58,237,0.24);
+}
+.status-quo-item:last-child::before {
+  display: none;
+}
+.status-quo-date {
+  width: 74px;
+  height: 74px;
+  border-radius: 999px;
+  border: 1px solid rgba(167,139,250,0.38);
+  background: radial-gradient(circle at 35% 28%, rgba(124,58,237,0.42), rgba(15,23,42,0.96));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 24px rgba(124,58,237,0.16);
+}
+.status-quo-date strong {
+  color: #ffffff;
+  font-size: 22px;
+  line-height: 1;
+}
+.status-quo-date span {
+  color: #93c5fd;
+  font-size: 11px;
+  font-weight: 900;
+  margin-top: 4px;
+}
+.status-quo-bubble {
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 12px;
+  background: rgba(255,255,255,0.035);
+  padding: 13px 14px;
+  min-height: 74px;
+}
+.status-quo-bubble p {
+  margin: 0 0 7px;
+  color: #dbeafe;
+  line-height: 1.45;
+}
+.status-quo-bubble p:last-child {
+  margin-bottom: 0;
+}
 .field { display: grid; gap: 5px; margin-bottom: 11px; }
 .field label { font-size: 10px; text-transform: uppercase; font-weight: 900; color: #64748b; letter-spacing: 0.08em; }
 .field-help {
@@ -855,6 +930,7 @@ tr:hover td { background: rgba(124,58,237,0.055); }
   .welcome-grid { grid-template-columns: 1fr; }
   .data-view-grid,
   .benchmark-grid { grid-template-columns: 1fr; }
+  .status-quo-grid { grid-template-columns: 1fr; }
   .benchmark-control-grid,
   .benchmark-definition-grid { grid-template-columns: 1fr; }
   .grid.two, .grid.three, .grid.four { grid-template-columns: 1fr; }

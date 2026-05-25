@@ -34,7 +34,7 @@ import {
 } from "./lib/sqlite.js";
 import { downloadBlob, ensurePermission, idbDel, idbGet, idbSet, permissionState, supportsFileSystemAccess, writeFile } from "./lib/storage.js";
 import { listMarkdownFiles, routeCalculationFile, writeTextIntoFolder } from "./lib/files.js";
-import { adminTrackerFilename, buildAdminTrackerMarkdown, buildEcmMarkdown, buildMeetingMarkdown, buildMonthlyUsageMarkdown, buildSavingMarkdown, ecmFilename, extractMeetingSections, meetingFilename, monthlyUsageFilename, replaceMeetingSections, savingFilename } from "./lib/markdown.js";
+import { adminTrackerFilename, buildAdminTrackerMarkdown, buildEcmMarkdown, buildMeetingMarkdown, buildMonthlyUsageMarkdown, buildPropertyNoteMarkdown, buildSavingMarkdown, ecmFilename, extractMeetingSections, meetingFilename, monthlyUsageFilename, parsePropertyFieldsTable, propertyNoteIdentity, propertyNotesFilename, replaceMeetingSections, savingFilename, upsertPropertyFieldsTable } from "./lib/markdown.js";
 import { downloadCrremPdfReport, downloadEcmReviewWorkbook, downloadExcelRegister, downloadPptxRegister, downloadUsageCsv, downloadUsageWorkbook, parseEcmReviewWorkbook } from "./lib/reports.js";
 import { EQUIPMENT_TYPE_TO_BRICK_CLASS, kwh, money, todayIso, utilityCost, yamlQuote } from "./lib/format.js";
 import {
@@ -53,6 +53,7 @@ import {
 
 const FOLDERS = [
   { key: "database", label: "Database", required: true, description: "Where ecm_register.db is stored and backed up" },
+  { key: "propertyNotes", label: "Property Notes", required: true, description: "Obsidian folder for one structured property table per building" },
   { key: "ecmNotes", label: "ECM Notes", required: true, description: "Obsidian folder for ECM Markdown files" },
   { key: "savingNotes", label: "Implemented Savings Notes", required: true, description: "Obsidian folder where implemented saving Markdown files are written" },
   { key: "meetingNotes", label: "Meeting Notes", required: true, description: "Obsidian folder for monthly meeting notes" },
@@ -241,6 +242,11 @@ export default function App() {
       await idbSet(`folder_${key}`, handle);
       setHandles((prev) => ({ ...prev, [key]: handle }));
       setFolderStatuses((prev) => ({ ...prev, [key]: "granted" }));
+      if (key === "propertyNotes" && db) {
+        const synced = await syncPropertyNotesFolder(db, handle, { requestPermission: false });
+        notify(`Property Notes folder configured. Synced ${synced.count} property files.`);
+        return;
+      }
       if (key === "monthlyUsage" && db) {
         const synced = await writeMonthlyUsageMarkdownFiles(db, handle, { requestPermission: false });
         notify(`Monthly Usage folder configured. Synced ${synced.count} usage files.`);
@@ -267,6 +273,11 @@ export default function App() {
       const granted = await ensurePermission(handle, "readwrite");
       const status = granted ? "granted" : await permissionState(handle, "readwrite");
       setFolderStatuses((prev) => ({ ...prev, [key]: status }));
+      if (granted && key === "propertyNotes" && db) {
+        const synced = await syncPropertyNotesFolder(db, handle, { requestPermission: false });
+        notify(`Folder permission restored. Synced ${synced.count} property files.`);
+        return;
+      }
       if (granted && key === "monthlyUsage" && db) {
         const synced = await writeMonthlyUsageMarkdownFiles(db, handle, { requestPermission: false });
         notify(`Folder permission restored. Synced ${synced.count} usage files.`);
@@ -335,6 +346,16 @@ export default function App() {
       const nextDb = await openDatabaseFromHandle(fileHandle);
       setDb(nextDb);
       setDbFileHandle(fileHandle);
+      let propertySyncMessage = "";
+      if (allHandles.propertyNotes && statuses.propertyNotes === "granted") {
+        try {
+          const synced = await syncPropertyNotesFolder(nextDb, allHandles.propertyNotes, { requestPermission: false });
+          await saveDatabase(nextDb, fileHandle);
+          propertySyncMessage = ` Synced ${synced.count} property files.`;
+        } catch (syncError) {
+          propertySyncMessage = ` Property note sync skipped: ${syncError.message || String(syncError)}`;
+        }
+      }
       let ecmSyncMessage = "";
       if (allHandles.ecmNotes && statuses.ecmNotes === "granted") {
         try {
@@ -366,7 +387,7 @@ export default function App() {
       const nextData = getPortfolio(nextDb);
       setData(nextData);
       setActive("dashboard");
-      notify(`Workspace loaded: ${nextData.properties.length} properties, ${nextData.ecms.length} ECMs.${ecmSyncMessage}${usageSyncMessage}${adminTrackerSyncMessage}`);
+      notify(`Workspace loaded: ${nextData.properties.length} properties, ${nextData.ecms.length} ECMs.${propertySyncMessage}${ecmSyncMessage}${usageSyncMessage}${adminTrackerSyncMessage}`);
     } catch (error) {
       setSetupError(error.message || String(error));
       notify("Database load failed.");
@@ -430,6 +451,7 @@ export default function App() {
     setPropertyForm(EMPTY_PROPERTY);
     setSelectedPropertyId(String(id));
     await persist("Property saved.");
+    await syncPropertyNotesMarkdown(id);
   }
 
   async function removeProperty(id) {
@@ -543,6 +565,15 @@ export default function App() {
     }
   }
 
+  async function syncPropertyNotesMarkdown(propertyId = null) {
+    if (!handles.propertyNotes) return;
+    try {
+      await writePropertyMarkdownFiles(db, handles.propertyNotes, { propertyId });
+    } catch (error) {
+      notify(`Property saved locally. Obsidian property sync failed: ${error.message || String(error)}`);
+    }
+  }
+
   async function syncMonthlyUsageMarkdown(propertyId = null) {
     if (!handles.monthlyUsage) return;
     try {
@@ -592,6 +623,54 @@ export default function App() {
       if (ecm.obsidian_filename !== filename) setEcmObsidianFilename(targetDb, ecm.id, filename);
     }
     return { count: ecmsNow.length };
+  }
+
+  async function syncPropertyNotesFolder(targetDb, propertyNotesHandle, options = {}) {
+    await importPropertyMarkdownTables(targetDb, propertyNotesHandle, options);
+    return writePropertyMarkdownFiles(targetDb, propertyNotesHandle, options);
+  }
+
+  async function importPropertyMarkdownTables(targetDb, propertyNotesHandle, options = {}) {
+    if (!targetDb) throw new Error("Load a database before syncing property notes.");
+    if (!propertyNotesHandle) throw new Error("Configure the Property Notes folder first.");
+    const requestPermission = options.requestPermission !== false;
+    const granted = requestPermission
+      ? await ensurePermission(propertyNotesHandle, "readwrite")
+      : (await permissionState(propertyNotesHandle, "readwrite")) === "granted";
+    setFolderStatuses((prev) => ({ ...prev, propertyNotes: granted ? "granted" : "denied" }));
+    if (!granted) throw new Error("Property Notes folder permission was not granted.");
+
+    const files = await listMarkdownFiles(propertyNotesHandle);
+    let propertiesNow = getProperties(targetDb);
+    for (const file of files) {
+      const parsed = parsePropertyFieldsTable(file.text);
+      if (!parsed) continue;
+      const property = matchPropertyNote(propertiesNow, file, parsed);
+      if (!property) continue;
+      upsertProperty(targetDb, mergePropertyNoteValues(property, parsed));
+      propertiesNow = getProperties(targetDb);
+    }
+  }
+
+  async function writePropertyMarkdownFiles(targetDb, propertyNotesHandle, options = {}) {
+    if (!targetDb) throw new Error("Load a database before syncing property notes.");
+    if (!propertyNotesHandle) throw new Error("Configure the Property Notes folder first.");
+    const requestPermission = options.requestPermission !== false;
+    const granted = requestPermission
+      ? await ensurePermission(propertyNotesHandle, "readwrite")
+      : (await permissionState(propertyNotesHandle, "readwrite")) === "granted";
+    setFolderStatuses((prev) => ({ ...prev, propertyNotes: granted ? "granted" : "denied" }));
+    if (!granted) throw new Error("Property Notes folder permission was not granted.");
+
+    const files = await listMarkdownFiles(propertyNotesHandle);
+    const propertiesNow = getProperties(targetDb).filter((property) => !options.propertyId || property.id === Number(options.propertyId));
+    for (const property of propertiesNow) {
+      const file = matchPropertyNoteFile(property, files);
+      const filename = file?.name || propertyNotesFilename(property);
+      const text = file ? upsertPropertyFieldsTable(file.text, property) : buildPropertyNoteMarkdown(property);
+      await writeTextIntoFolder(propertyNotesHandle, filename, text);
+    }
+    return { count: propertiesNow.length };
   }
 
   async function writeMonthlyUsageMarkdownFiles(targetDb, monthlyUsageHandle, options = {}) {
@@ -3724,6 +3803,80 @@ function propertyToForm(property) {
     heating_emission_factor_kgco2e_per_kwh: property.heating_emission_factor_kgco2e_per_kwh ?? "",
     cooling_emission_factor_kgco2e_per_kwh: property.cooling_emission_factor_kgco2e_per_kwh ?? ""
   };
+}
+
+function matchPropertyNote(properties, file, parsed = {}) {
+  if (parsed.id) {
+    const byId = properties.find((property) => Number(property.id) === Number(parsed.id));
+    if (byId) return byId;
+  }
+  if (parsed.name) {
+    const byName = properties.find((property) => propertyKey(property.name) === propertyKey(parsed.name));
+    if (byName) return byName;
+  }
+  return properties.find((property) => matchPropertyNoteFile(property, [file], properties)) || null;
+}
+
+function matchPropertyNoteFile(property, files, properties = [property]) {
+  const byId = files.find((file) => {
+    const parsed = parsePropertyFieldsTable(file.text);
+    return parsed?.id && Number(parsed.id) === Number(property.id);
+  });
+  if (byId) return byId;
+
+  const propertyTokens = propertyNameTokens(property.name);
+  let best = null;
+  let bestScore = 0;
+  for (const file of files) {
+    const identity = propertyNoteIdentity(file.text, file.name);
+    const tokens = propertyNameTokens(identity);
+    const score = propertyTokens.filter((token) => tokens.includes(token)).length;
+    if (score > bestScore) {
+      best = file;
+      bestScore = score;
+    }
+  }
+  if (bestScore > 0) return best;
+
+  const knownNames = properties.map((item) => propertyKey(item.name));
+  return files.find((file) => knownNames.includes(propertyKey(propertyNoteIdentity(file.text, file.name)))) || null;
+}
+
+function mergePropertyNoteValues(property, parsed) {
+  const next = { ...property };
+  for (const key of [
+    "name",
+    "address",
+    "total_floor_area",
+    "crrem_country",
+    "crrem_property_type",
+    "heating_carrier",
+    "cooling_carrier",
+    "renewable_consumed_kwh",
+    "renewable_exported_kwh",
+    "heating_emission_factor_kgco2e_per_kwh",
+    "cooling_emission_factor_kgco2e_per_kwh",
+    "elec_cost_eur_per_kwh",
+    "heating_cost_eur_per_kwh",
+    "cooling_cost_eur_per_kwh",
+    "notes"
+  ]) {
+    if (parsed[key] !== undefined && parsed[key] !== "") next[key] = parsed[key];
+  }
+  return next;
+}
+
+function propertyKey(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function propertyNameTokens(value) {
+  const ignored = new Set(["building", "tower", "notes", "general", "property", "st", "street", "hq"]);
+  return propertyKey(value).split(/\s+/).filter((token) => token && !ignored.has(token));
 }
 
 function carrierLabel(options, value) {

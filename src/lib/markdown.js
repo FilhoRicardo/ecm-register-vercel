@@ -14,6 +14,76 @@ export function meetingFilename(property, reportMonth) {
   return `${reportMonth}_${slug(property?.name || "Property")}_Monthly_ECM_Meeting.md`;
 }
 
+export function propertyNotesFilename(property) {
+  return `${slug(property?.name || "Property")}.md`;
+}
+
+const PROPERTY_FIELDS = [
+  ["id", "Database ID"],
+  ["name", "Name"],
+  ["address", "Address"],
+  ["total_floor_area", "Total floor area m2"],
+  ["crrem_country", "CRREM country"],
+  ["crrem_property_type", "CRREM property type"],
+  ["heating_carrier", "Heating carrier"],
+  ["cooling_carrier", "Cooling carrier"],
+  ["renewable_consumed_kwh", "On-site renewable consumed kWh/a"],
+  ["renewable_exported_kwh", "On-site renewable exported kWh/a"],
+  ["heating_emission_factor_kgco2e_per_kwh", "Heating emissions factor override"],
+  ["cooling_emission_factor_kgco2e_per_kwh", "Cooling emissions factor override"],
+  ["elec_cost_eur_per_kwh", "Electricity cost EUR/kWh"],
+  ["heating_cost_eur_per_kwh", "Heating cost EUR/kWh"],
+  ["cooling_cost_eur_per_kwh", "Cooling cost EUR/kWh"],
+  ["notes", "Notes"]
+];
+
+const PROPERTY_TABLE_START = "<!-- ecm-register:property-fields:start -->";
+const PROPERTY_TABLE_END = "<!-- ecm-register:property-fields:end -->";
+
+export function upsertPropertyFieldsTable(markdown = "", property = {}) {
+  const block = buildPropertyFieldsBlock(property);
+  const pattern = new RegExp(`${escapeRegExp(PROPERTY_TABLE_START)}[\\s\\S]*?${escapeRegExp(PROPERTY_TABLE_END)}\\n?`);
+  if (pattern.test(markdown)) return markdown.replace(pattern, `${block}\n\n`);
+  return insertAfterFrontmatter(markdown, `${block}\n\n`);
+}
+
+export function buildPropertyNoteMarkdown(property = {}) {
+  return upsertPropertyFieldsTable(`# ${property.name || "Property"}\n`, property);
+}
+
+export function parsePropertyFieldsTable(markdown = "") {
+  const start = markdown.indexOf(PROPERTY_TABLE_START);
+  const end = markdown.indexOf(PROPERTY_TABLE_END);
+  if (start < 0 || end < start) return null;
+  const block = markdown.slice(start, end);
+  const out = {};
+  for (const line of block.split("\n")) {
+    if (line.startsWith("|")) {
+      if (line.includes("---") || line.includes("Field") || line.includes("Value")) continue;
+      const cells = splitTableRow(line);
+      if (cells.length < 2) continue;
+      const key = propertyFieldKey(cells[0]);
+      if (!key) continue;
+      const value = cells[1].trim();
+      if (value) out[key] = value;
+      continue;
+    }
+    const bullet = line.match(/^-\s+\*\*(.+?)\*\*:\s*(.*)$/);
+    if (!bullet) continue;
+    const key = propertyFieldKey(bullet[1]);
+    if (!key) continue;
+    const value = bullet[2].trim();
+    if (value) out[key] = value;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+export function propertyNoteIdentity(markdown = "", filename = "") {
+  const building = frontmatterValue(markdown, "building");
+  const title = markdown.match(/^#\s+(.+)$/m)?.[1] || "";
+  return [filename.replace(/\.md$/i, ""), building, title].filter(Boolean).join(" ");
+}
+
 export function monthlyUsageFilename(property) {
   return `${slug(property?.name || "Property")}_Monthly_Usage.md`;
 }
@@ -170,6 +240,66 @@ function adminPeriod(row) {
   const year = row.admin_year || "";
   const month = String(row.admin_month || "").padStart(2, "0");
   return year && month ? `${year}-${month}` : "";
+}
+
+function buildPropertyFieldsBlock(property) {
+  const rows = PROPERTY_FIELDS.map(([key, label]) => `- **${label}**: ${bulletValue(property[key])}`).join("\n");
+  return `${PROPERTY_TABLE_START}
+## ECM Register Property Fields
+
+${rows}
+${PROPERTY_TABLE_END}`;
+}
+
+function bulletValue(value) {
+  return String(value ?? "").replace(/\n/g, " ").trim();
+}
+
+function insertAfterFrontmatter(markdown, content) {
+  const text = String(markdown || "");
+  if (text.startsWith("---\n")) {
+    const end = text.indexOf("\n---", 4);
+    if (end >= 0) {
+      const after = text.indexOf("\n", end + 4);
+      const insertAt = after >= 0 ? after + 1 : text.length;
+      return `${text.slice(0, insertAt)}\n${content}${text.slice(insertAt).replace(/^\n+/, "")}`;
+    }
+  }
+  return `${content}${text.replace(/^\n+/, "")}`;
+}
+
+function splitTableRow(line) {
+  const cells = [];
+  let current = "";
+  let escaped = false;
+  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  for (const char of trimmed) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+    } else if (char === "\\") {
+      escaped = true;
+    } else if (char === "|") {
+      cells.push(current.trim());
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+function propertyFieldKey(label) {
+  const normalised = String(label || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const field = PROPERTY_FIELDS.find(([, fieldLabel]) => fieldLabel.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim() === normalised);
+  return field?.[0] || "";
+}
+
+function frontmatterValue(markdown, key) {
+  const match = String(markdown || "").match(new RegExp(`^${escapeRegExp(key)}:\\\\s*(.+)$`, "m"));
+  if (!match) return "";
+  return match[1].trim().replace(/^["']|["']$/g, "");
 }
 
 export function buildSavingMarkdown(saving, ecm, property) {

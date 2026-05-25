@@ -92,6 +92,104 @@ export function adminTrackerFilename(property) {
   return `${slug(property?.name || "Property")}_Admin_Tracker.md`;
 }
 
+export function tenantsFilename(property) {
+  return `${slug(property?.name || "Property")}_Tenants.md`;
+}
+
+export function equipmentFilename(property) {
+  return `${slug(property?.name || "Property")}_Equipment.md`;
+}
+
+export function buildTenantsMarkdown(property, tenants = []) {
+  const rows = tenants.length
+    ? tenants.map((tenant) => `- **${bulletValue(tenant.tenant_name)}**
+  - Database ID: ${bulletValue(tenant.id)}
+  - Location ID: ${bulletValue(tenant.tenant_location_id)}
+  - Location label: ${bulletValue(tenant.location_label)}
+  - Floor area m2: ${bulletValue(tenant.tenant_floor_area)}
+  - Notes: ${bulletValue(tenant.notes)}`).join("\n")
+    : "- _No tenant records yet._";
+
+  return `---
+record_type: tenants
+property: "[[${property?.name || ""}]]"
+property_id: ${property?.id || ""}
+date_modified: ${yamlQuote(new Date().toISOString())}
+tags:
+  - ecm
+  - tenants
+  - union-module-4
+---
+
+# ${property?.name || "Property"} - Tenants
+
+${rows}
+`;
+}
+
+export function parseTenantsMarkdown(markdown = "") {
+  return {
+    property_id: Number(frontmatterValue(markdown, "property_id") || 0) || null,
+    property: cleanWikiLink(frontmatterValue(markdown, "property")),
+    rows: parseNestedBulletRecords(markdown).map((record) => ({
+      id: numberOrNull(record["Database ID"]),
+      tenant_name: record.title,
+      tenant_location_id: record["Location ID"] || "",
+      location_label: record["Location label"] || "",
+      tenant_floor_area: record["Floor area m2"] || "",
+      notes: record.Notes || ""
+    })).filter((row) => row.tenant_name && !row.tenant_name.startsWith("_No "))
+  };
+}
+
+export function buildEquipmentMarkdown(property, equipment = []) {
+  const rows = equipment.length
+    ? equipment.map((item) => `- **${bulletValue(item.equipment_name)}**
+  - Database ID: ${bulletValue(item.id)}
+  - Tenant: ${bulletValue(item.tenant_name || "Whole property")}
+  - Type: ${bulletValue(item.equipment_type)}
+  - Brick class: ${bulletValue(item.brick_class)}
+  - Utility: ${bulletValue(item.utility_type)}
+  - DEXMA location ID: ${bulletValue(item.dexma_location_id)}
+  - DEXMA device ID: ${bulletValue(item.dexma_device_id)}
+  - Notes: ${bulletValue(item.notes)}`).join("\n")
+    : "- _No equipment records yet._";
+
+  return `---
+record_type: equipment
+property: "[[${property?.name || ""}]]"
+property_id: ${property?.id || ""}
+date_modified: ${yamlQuote(new Date().toISOString())}
+tags:
+  - ecm
+  - equipment
+  - union-module-4
+---
+
+# ${property?.name || "Property"} - Equipment
+
+${rows}
+`;
+}
+
+export function parseEquipmentMarkdown(markdown = "") {
+  return {
+    property_id: Number(frontmatterValue(markdown, "property_id") || 0) || null,
+    property: cleanWikiLink(frontmatterValue(markdown, "property")),
+    rows: parseNestedBulletRecords(markdown).map((record) => ({
+      id: numberOrNull(record["Database ID"]),
+      equipment_name: record.title,
+      tenant_name: record.Tenant === "Whole property" ? "" : record.Tenant || "",
+      equipment_type: record.Type || "",
+      brick_class: record["Brick class"] || "",
+      utility_type: record.Utility || "",
+      dexma_location_id: record["DEXMA location ID"] || "",
+      dexma_device_id: record["DEXMA device ID"] || "",
+      notes: record.Notes || ""
+    })).filter((row) => row.equipment_name && !row.equipment_name.startsWith("_No "))
+  };
+}
+
 export function buildAdminTrackerMarkdown(property, records = []) {
   const rows = [...records].sort((a, b) => {
     const yearDiff = Number(a.admin_year || 0) - Number(b.admin_year || 0);
@@ -119,6 +217,26 @@ tags:
 |---|---:|---:|---:|---:|---:|---|
 ${tableRows}
 `;
+}
+
+export function parseAdminTrackerMarkdown(markdown = "") {
+  return {
+    property_id: Number(frontmatterValue(markdown, "property_id") || 0) || null,
+    property: cleanWikiLink(frontmatterValue(markdown, "property")),
+    rows: parseMarkdownTable(markdown).map((row) => {
+      const [year, month] = String(row.Month || "").split("-");
+      return {
+        admin_year: year,
+        admin_month: Number(month || 0) || "",
+        docunite_report: yesNo(row["Docunite report"]),
+        ecm_report: yesNo(row["ECM report"]),
+        status_quo: yesNo(row["Status Quo"]),
+        pre_meeting_notes: yesNo(row["Pre Meeting notes"]),
+        post_meeting_notes: yesNo(row["Post meeting notes"]),
+        comments: row.Comments || ""
+      };
+    }).filter((row) => row.admin_year && row.admin_month)
+  };
 }
 
 export function buildMonthlyUsageMarkdown(property, usageRows = []) {
@@ -151,6 +269,22 @@ tags:
 |---|---|---:|---:|---:|---|
 ${tableRows}
 `;
+}
+
+export function parseMonthlyUsageMarkdown(markdown = "") {
+  return {
+    property_id: Number(frontmatterValue(markdown, "property_id") || 0) || null,
+    property: cleanWikiLink(frontmatterValue(markdown, "property")),
+    rows: parseMarkdownTable(markdown).map((row) => ({
+      usage_month: row.Month || "",
+      scope: row.Scope || "",
+      scope_type: propertyKey(row.Scope) === "landlord" ? "building" : "tenant",
+      electricity_kwh: numberOrZero(row["Electricity kWh"]),
+      heating_kwh: numberOrZero(row["Heating kWh"]),
+      cooling_kwh: numberOrZero(row["Cooling kWh"]),
+      notes: row.Notes || ""
+    })).filter((row) => row.usage_month && !row.usage_month.startsWith("_No "))
+  };
 }
 
 export function buildEcmMarkdown(ecm, property, attachments = []) {
@@ -253,6 +387,65 @@ ${PROPERTY_TABLE_END}`;
 
 function bulletValue(value) {
   return String(value ?? "").replace(/\n/g, " ").trim();
+}
+
+function parseNestedBulletRecords(markdown = "") {
+  const rows = [];
+  let current = null;
+  for (const line of String(markdown || "").split("\n")) {
+    const top = line.match(/^-\s+\*\*(.+?)\*\*\s*$/);
+    if (top) {
+      current = { title: top[1].trim() };
+      rows.push(current);
+      continue;
+    }
+    if (!current) continue;
+    const field = line.match(/^\s{2,}-\s+([^:]+):\s*(.*)$/);
+    if (field) current[field[1].trim()] = field[2].trim();
+  }
+  return rows;
+}
+
+function numberOrNull(value) {
+  if (value === "" || value === undefined || value === null) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function numberOrZero(value) {
+  const n = Number(String(value || "").replace(/,/g, ""));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function yesNo(value) {
+  return /^(yes|true|done|x|1)$/i.test(String(value || "").trim());
+}
+
+function propertyKey(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function cleanWikiLink(value) {
+  return String(value || "").replace(/^\[\[|\]\]$/g, "").trim();
+}
+
+function parseMarkdownTable(markdown = "") {
+  const lines = String(markdown || "").split("\n").filter((line) => line.trim().startsWith("|"));
+  const headerIndex = lines.findIndex((line, index) => index + 1 < lines.length && lines[index + 1].includes("---"));
+  if (headerIndex < 0) return [];
+  const headers = splitTableRow(lines[headerIndex]);
+  return lines.slice(headerIndex + 2).map((line) => {
+    const cells = splitTableRow(line);
+    const row = {};
+    headers.forEach((header, index) => {
+      row[header] = cells[index] || "";
+    });
+    return row;
+  });
 }
 
 function insertAfterFrontmatter(markdown, content) {

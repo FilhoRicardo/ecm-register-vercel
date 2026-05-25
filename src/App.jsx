@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   databaseHealth,
+  deleteAdminTrackerForProperty,
   deleteEcm,
   deleteEquipment,
+  deleteEquipmentForProperty,
   deleteImplementedSaving,
   deleteMonthlyUsage,
+  deleteMonthlyUsageForProperty,
   deleteProperty,
   deleteTenant,
+  deleteTenantsForProperty,
   getAttachments,
   getAdminTracker,
   getEcms,
@@ -34,7 +38,7 @@ import {
 } from "./lib/sqlite.js";
 import { downloadBlob, ensurePermission, idbDel, idbGet, idbSet, permissionState, supportsFileSystemAccess, writeFile } from "./lib/storage.js";
 import { listMarkdownFiles, routeCalculationFile, writeTextIntoFolder } from "./lib/files.js";
-import { adminTrackerFilename, buildAdminTrackerMarkdown, buildEcmMarkdown, buildMeetingMarkdown, buildMonthlyUsageMarkdown, buildPropertyNoteMarkdown, buildSavingMarkdown, ecmFilename, extractMeetingSections, meetingFilename, monthlyUsageFilename, parsePropertyFieldsTable, propertyNoteIdentity, propertyNotesFilename, replaceMeetingSections, savingFilename, upsertPropertyFieldsTable } from "./lib/markdown.js";
+import { adminTrackerFilename, buildAdminTrackerMarkdown, buildEcmMarkdown, buildEquipmentMarkdown, buildMeetingMarkdown, buildMonthlyUsageMarkdown, buildPropertyNoteMarkdown, buildSavingMarkdown, buildTenantsMarkdown, ecmFilename, equipmentFilename, extractMeetingSections, meetingFilename, monthlyUsageFilename, parseAdminTrackerMarkdown, parseEquipmentMarkdown, parseMonthlyUsageMarkdown, parsePropertyFieldsTable, parseTenantsMarkdown, propertyNoteIdentity, propertyNotesFilename, replaceMeetingSections, savingFilename, tenantsFilename, upsertPropertyFieldsTable } from "./lib/markdown.js";
 import { downloadCrremPdfReport, downloadEcmReviewWorkbook, downloadExcelRegister, downloadPptxRegister, downloadUsageCsv, downloadUsageWorkbook, parseEcmReviewWorkbook } from "./lib/reports.js";
 import { EQUIPMENT_TYPE_TO_BRICK_CLASS, kwh, money, todayIso, utilityCost, yamlQuote } from "./lib/format.js";
 import {
@@ -54,6 +58,8 @@ import {
 const FOLDERS = [
   { key: "database", label: "Database", required: true, description: "Where ecm_register.db is stored and backed up" },
   { key: "propertyNotes", label: "Property Notes", required: true, description: "Obsidian folder for one structured property table per building" },
+  { key: "tenantNotes", label: "Tenant Notes", required: true, description: "Obsidian folder for one tenant mirror per building" },
+  { key: "equipmentNotes", label: "Equipment Notes", required: true, description: "Obsidian folder for one equipment mirror per building" },
   { key: "ecmNotes", label: "ECM Notes", required: true, description: "Obsidian folder for ECM Markdown files" },
   { key: "savingNotes", label: "Implemented Savings Notes", required: true, description: "Obsidian folder where implemented saving Markdown files are written" },
   { key: "meetingNotes", label: "Meeting Notes", required: true, description: "Obsidian folder for monthly meeting notes" },
@@ -72,18 +78,19 @@ const NAV = [
   ["setup", "⚙️ Setup"],
   ["dashboard", "🎯 Dashboard"],
   ["properties", "🏢 Properties"],
-  ["tenants", "👥 Tenants & Equipment"],
+  ["tenants", "👥 Tenants"],
+  ["equipment", "🧰 Equipment"],
+  ["usage", "📊 Monthly Usage"],
   ["ecms", "⚡ ECMs"],
   ["savings", "💶 Implemented Savings"],
-  ["usage", "📊 Monthly Usage"],
-  ["data", "📈 Data View"],
-  ["crrem", "🌍 CRREM Plot"],
-  ["meetings", "📝 Monthly Meetings"],
-  ["reports", "📤 Reports"],
+  ["admintracker", "\u{1F5C2}\u{FE0F} Admin Tracker"],
   ["statusquo", "\u{1F4CD} Status Quo"],
   ["actions", "\u{2611}\u{FE0F} Open Actions"],
-  ["admintracker", "\u{1F5C2}\u{FE0F} Admin Tracker"],
+  ["meetings", "📝 Monthly Meetings"],
+  ["data", "📈 Data View"],
   ["benchmark", "\u{1F3C1} Benchmark"],
+  ["crrem", "🌍 CRREM Plot"],
+  ["reports", "📤 Reports"],
   ["database", "🧪 SQLite Lab"],
   ["admin", "🛡️ Database Admin"]
 ];
@@ -140,6 +147,7 @@ const EMPTY_PROPERTY = {
 const EMPTY_TENANT = {
   property_id: "",
   tenant_name: "",
+  tenant_location_id: "",
   tenant_floor_area: "",
   location_label: "",
   notes: ""
@@ -151,6 +159,8 @@ const EMPTY_EQUIPMENT = {
   equipment_name: "",
   equipment_type: "Air Handling Unit",
   brick_class: "brick:AHU",
+  dexma_location_id: "",
+  dexma_device_id: "",
   utility_type: "electricity",
   notes: ""
 };
@@ -247,6 +257,16 @@ export default function App() {
         notify(`Property Notes folder configured. Synced ${synced.count} property files.`);
         return;
       }
+      if (key === "tenantNotes" && db) {
+        const synced = await writeTenantMarkdownFiles(db, handle, { requestPermission: false });
+        notify(`Tenant Notes folder configured. Synced ${synced.count} tenant files.`);
+        return;
+      }
+      if (key === "equipmentNotes" && db) {
+        const synced = await writeEquipmentMarkdownFiles(db, handle, { requestPermission: false });
+        notify(`Equipment Notes folder configured. Synced ${synced.count} equipment files.`);
+        return;
+      }
       if (key === "monthlyUsage" && db) {
         const synced = await writeMonthlyUsageMarkdownFiles(db, handle, { requestPermission: false });
         notify(`Monthly Usage folder configured. Synced ${synced.count} usage files.`);
@@ -276,6 +296,16 @@ export default function App() {
       if (granted && key === "propertyNotes" && db) {
         const synced = await syncPropertyNotesFolder(db, handle, { requestPermission: false });
         notify(`Folder permission restored. Synced ${synced.count} property files.`);
+        return;
+      }
+      if (granted && key === "tenantNotes" && db) {
+        const synced = await writeTenantMarkdownFiles(db, handle, { requestPermission: false });
+        notify(`Folder permission restored. Synced ${synced.count} tenant files.`);
+        return;
+      }
+      if (granted && key === "equipmentNotes" && db) {
+        const synced = await writeEquipmentMarkdownFiles(db, handle, { requestPermission: false });
+        notify(`Folder permission restored. Synced ${synced.count} equipment files.`);
         return;
       }
       if (granted && key === "monthlyUsage" && db) {
@@ -356,6 +386,26 @@ export default function App() {
           propertySyncMessage = ` Property note sync skipped: ${syncError.message || String(syncError)}`;
         }
       }
+      let tenantSyncMessage = "";
+      if (allHandles.tenantNotes && statuses.tenantNotes === "granted") {
+        try {
+          await importTenantMarkdownFiles(nextDb, allHandles.tenantNotes, { requestPermission: false });
+          const synced = await writeTenantMarkdownFiles(nextDb, allHandles.tenantNotes, { requestPermission: false });
+          tenantSyncMessage = ` Read Obsidian tenants and normalized ${synced.count} tenant files.`;
+        } catch (syncError) {
+          tenantSyncMessage = ` Tenant import skipped: ${syncError.message || String(syncError)}`;
+        }
+      }
+      let equipmentSyncMessage = "";
+      if (allHandles.equipmentNotes && statuses.equipmentNotes === "granted") {
+        try {
+          await importEquipmentMarkdownFiles(nextDb, allHandles.equipmentNotes, { requestPermission: false });
+          const synced = await writeEquipmentMarkdownFiles(nextDb, allHandles.equipmentNotes, { requestPermission: false });
+          equipmentSyncMessage = ` Read Obsidian equipment and normalized ${synced.count} equipment files.`;
+        } catch (syncError) {
+          equipmentSyncMessage = ` Equipment import skipped: ${syncError.message || String(syncError)}`;
+        }
+      }
       let ecmSyncMessage = "";
       if (allHandles.ecmNotes && statuses.ecmNotes === "granted") {
         try {
@@ -369,25 +419,27 @@ export default function App() {
       let usageSyncMessage = "";
       if (allHandles.monthlyUsage && statuses.monthlyUsage === "granted") {
         try {
+          await importMonthlyUsageMarkdownFiles(nextDb, allHandles.monthlyUsage, { requestPermission: false });
           const synced = await writeMonthlyUsageMarkdownFiles(nextDb, allHandles.monthlyUsage, { requestPermission: false });
-          usageSyncMessage = ` Synced ${synced.count} monthly usage files.`;
+          usageSyncMessage = ` Read Obsidian usage and normalized ${synced.count} monthly usage files.`;
         } catch (syncError) {
-          usageSyncMessage = ` Monthly usage sync skipped: ${syncError.message || String(syncError)}`;
+          usageSyncMessage = ` Monthly usage import skipped: ${syncError.message || String(syncError)}`;
         }
       }
       let adminTrackerSyncMessage = "";
       if (allHandles.adminTracker && statuses.adminTracker === "granted") {
         try {
+          await importAdminTrackerMarkdownFiles(nextDb, allHandles.adminTracker, { requestPermission: false });
           const synced = await writeAdminTrackerMarkdownFiles(nextDb, allHandles.adminTracker, { requestPermission: false });
-          adminTrackerSyncMessage = ` Synced ${synced.count} admin tracker files.`;
+          adminTrackerSyncMessage = ` Read Obsidian admin tracker and normalized ${synced.count} admin tracker files.`;
         } catch (syncError) {
-          adminTrackerSyncMessage = ` Admin tracker sync skipped: ${syncError.message || String(syncError)}`;
+          adminTrackerSyncMessage = ` Admin tracker import skipped: ${syncError.message || String(syncError)}`;
         }
       }
       const nextData = getPortfolio(nextDb);
       setData(nextData);
       setActive("dashboard");
-      notify(`Workspace loaded: ${nextData.properties.length} properties, ${nextData.ecms.length} ECMs.${propertySyncMessage}${ecmSyncMessage}${usageSyncMessage}${adminTrackerSyncMessage}`);
+      notify(`Workspace loaded: ${nextData.properties.length} properties, ${nextData.ecms.length} ECMs.${propertySyncMessage}${tenantSyncMessage}${equipmentSyncMessage}${ecmSyncMessage}${usageSyncMessage}${adminTrackerSyncMessage}`);
     } catch (error) {
       setSetupError(error.message || String(error));
       notify("Database load failed.");
@@ -463,35 +515,47 @@ export default function App() {
 
   async function saveTenant(event) {
     event.preventDefault();
-    upsertTenant(db, { ...tenantForm, id: tenantForm.id || null, property_id: Number(tenantForm.property_id) });
+    const propertyId = Number(tenantForm.property_id);
+    upsertTenant(db, { ...tenantForm, id: tenantForm.id || null, property_id: propertyId });
     setTenantForm({ ...EMPTY_TENANT, property_id: selectedPropertyId || tenantForm.property_id });
     await persist("Tenant saved.");
+    await syncTenantMarkdown(propertyId);
+    await syncEquipmentMarkdown(propertyId);
   }
 
   async function removeTenant(id) {
     if (!window.confirm("Delete this tenant/location record?")) return;
+    const existing = (data?.tenants || []).find((tenant) => tenant.id === id);
     deleteTenant(db, id);
     setTenantForm({ ...EMPTY_TENANT, property_id: selectedPropertyId });
     await persist("Tenant deleted.");
+    if (existing) {
+      await syncTenantMarkdown(existing.property_id);
+      await syncEquipmentMarkdown(existing.property_id);
+    }
   }
 
   async function saveEquipment(event) {
     event.preventDefault();
+    const propertyId = Number(equipmentForm.property_id);
     upsertEquipment(db, {
       ...equipmentForm,
       id: equipmentForm.id || null,
-      property_id: Number(equipmentForm.property_id),
+      property_id: propertyId,
       tenant_id: equipmentForm.tenant_id ? Number(equipmentForm.tenant_id) : null
     });
     setEquipmentForm({ ...EMPTY_EQUIPMENT, property_id: selectedPropertyId || equipmentForm.property_id });
     await persist("Equipment saved.");
+    await syncEquipmentMarkdown(propertyId);
   }
 
   async function removeEquipment(id) {
     if (!window.confirm("Delete this equipment record?")) return;
+    const existing = (data?.equipment || []).find((item) => item.id === id);
     deleteEquipment(db, id);
     setEquipmentForm({ ...EMPTY_EQUIPMENT, property_id: selectedPropertyId });
     await persist("Equipment deleted.");
+    if (existing) await syncEquipmentMarkdown(existing.property_id);
   }
 
   async function saveUsage(event, override = {}) {
@@ -557,7 +621,33 @@ export default function App() {
         await writeTextIntoFolder(handles.savingNotes, filename, buildSavingMarkdown(saving, ecm, property));
         setSavingObsidianFilename(db, saving.id, filename);
       }
-      await persist(`Synced ${ecmSync.count} ECM notes and ${savingsNow.length} implemented-savings notes to Obsidian.`);
+      const extraSyncs = [];
+      if (handles.propertyNotes) {
+        const synced = await writePropertyMarkdownFiles(db, handles.propertyNotes);
+        extraSyncs.push(`${synced.count} property files`);
+      }
+      if (handles.tenantNotes) {
+        await importTenantMarkdownFiles(db, handles.tenantNotes);
+        const synced = await writeTenantMarkdownFiles(db, handles.tenantNotes);
+        extraSyncs.push(`${synced.count} tenant files`);
+      }
+      if (handles.equipmentNotes) {
+        await importEquipmentMarkdownFiles(db, handles.equipmentNotes);
+        const synced = await writeEquipmentMarkdownFiles(db, handles.equipmentNotes);
+        extraSyncs.push(`${synced.count} equipment files`);
+      }
+      if (handles.monthlyUsage) {
+        await importMonthlyUsageMarkdownFiles(db, handles.monthlyUsage);
+        const synced = await writeMonthlyUsageMarkdownFiles(db, handles.monthlyUsage);
+        extraSyncs.push(`${synced.count} monthly usage files`);
+      }
+      if (handles.adminTracker) {
+        await importAdminTrackerMarkdownFiles(db, handles.adminTracker);
+        const synced = await writeAdminTrackerMarkdownFiles(db, handles.adminTracker);
+        extraSyncs.push(`${synced.count} admin tracker files`);
+      }
+      const extraMessage = extraSyncs.length ? `, plus ${extraSyncs.join(", ")}` : "";
+      await persist(`Synced ${ecmSync.count} ECM notes and ${savingsNow.length} implemented-savings notes${extraMessage} to Obsidian.`);
     } catch (error) {
       notify(error.message || String(error));
     } finally {
@@ -571,6 +661,24 @@ export default function App() {
       await writePropertyMarkdownFiles(db, handles.propertyNotes, { propertyId });
     } catch (error) {
       notify(`Property saved locally. Obsidian property sync failed: ${error.message || String(error)}`);
+    }
+  }
+
+  async function syncTenantMarkdown(propertyId = null) {
+    if (!handles.tenantNotes) return;
+    try {
+      await writeTenantMarkdownFiles(db, handles.tenantNotes, { propertyId });
+    } catch (error) {
+      notify(`Tenant saved locally. Obsidian tenant sync failed: ${error.message || String(error)}`);
+    }
+  }
+
+  async function syncEquipmentMarkdown(propertyId = null) {
+    if (!handles.equipmentNotes) return;
+    try {
+      await writeEquipmentMarkdownFiles(db, handles.equipmentNotes, { propertyId });
+    } catch (error) {
+      notify(`Equipment saved locally. Obsidian equipment sync failed: ${error.message || String(error)}`);
     }
   }
 
@@ -673,6 +781,109 @@ export default function App() {
     return { count: propertiesNow.length };
   }
 
+  async function writeTenantMarkdownFiles(targetDb, tenantNotesHandle, options = {}) {
+    if (!targetDb) throw new Error("Load a database before syncing tenants.");
+    if (!tenantNotesHandle) throw new Error("Configure the Tenant Notes folder first.");
+    const requestPermission = options.requestPermission !== false;
+    const granted = requestPermission
+      ? await ensurePermission(tenantNotesHandle, "readwrite")
+      : (await permissionState(tenantNotesHandle, "readwrite")) === "granted";
+    setFolderStatuses((prev) => ({ ...prev, tenantNotes: granted ? "granted" : "denied" }));
+    if (!granted) throw new Error("Tenant Notes folder permission was not granted.");
+
+    const propertiesNow = getProperties(targetDb).filter((property) => !options.propertyId || property.id === Number(options.propertyId));
+    const tenantsNow = getTenants(targetDb);
+    for (const property of propertiesNow) {
+      const rows = tenantsNow.filter((tenant) => tenant.property_id === property.id);
+      await writeTextIntoFolder(tenantNotesHandle, tenantsFilename(property), buildTenantsMarkdown(property, rows));
+    }
+    return { count: propertiesNow.length };
+  }
+
+  async function importTenantMarkdownFiles(targetDb, tenantNotesHandle, options = {}) {
+    if (!targetDb) throw new Error("Load a database before reading tenants.");
+    if (!tenantNotesHandle) throw new Error("Configure the Tenant Notes folder first.");
+    const requestPermission = options.requestPermission !== false;
+    const granted = requestPermission
+      ? await ensurePermission(tenantNotesHandle, "readwrite")
+      : (await permissionState(tenantNotesHandle, "readwrite")) === "granted";
+    setFolderStatuses((prev) => ({ ...prev, tenantNotes: granted ? "granted" : "denied" }));
+    if (!granted) throw new Error("Tenant Notes folder permission was not granted.");
+
+    const propertiesNow = getProperties(targetDb);
+    const files = await listMarkdownFiles(tenantNotesHandle);
+    let count = 0;
+    for (const file of files) {
+      const parsed = parseTenantsMarkdown(file.text);
+      const property = matchStructuredNoteProperty(propertiesNow, file, parsed, "_Tenants");
+      if (!property || (options.propertyId && property.id !== Number(options.propertyId))) continue;
+      deleteTenantsForProperty(targetDb, property.id);
+      for (const row of parsed.rows) {
+        upsertTenant(targetDb, {
+          ...row,
+          id: null,
+          property_id: property.id
+        });
+        count += 1;
+      }
+    }
+    return { count };
+  }
+
+  async function writeEquipmentMarkdownFiles(targetDb, equipmentNotesHandle, options = {}) {
+    if (!targetDb) throw new Error("Load a database before syncing equipment.");
+    if (!equipmentNotesHandle) throw new Error("Configure the Equipment Notes folder first.");
+    const requestPermission = options.requestPermission !== false;
+    const granted = requestPermission
+      ? await ensurePermission(equipmentNotesHandle, "readwrite")
+      : (await permissionState(equipmentNotesHandle, "readwrite")) === "granted";
+    setFolderStatuses((prev) => ({ ...prev, equipmentNotes: granted ? "granted" : "denied" }));
+    if (!granted) throw new Error("Equipment Notes folder permission was not granted.");
+
+    const propertiesNow = getProperties(targetDb).filter((property) => !options.propertyId || property.id === Number(options.propertyId));
+    const equipmentNow = getEquipment(targetDb);
+    for (const property of propertiesNow) {
+      const rows = equipmentNow.filter((item) => item.property_id === property.id);
+      await writeTextIntoFolder(equipmentNotesHandle, equipmentFilename(property), buildEquipmentMarkdown(property, rows));
+    }
+    return { count: propertiesNow.length };
+  }
+
+  async function importEquipmentMarkdownFiles(targetDb, equipmentNotesHandle, options = {}) {
+    if (!targetDb) throw new Error("Load a database before reading equipment.");
+    if (!equipmentNotesHandle) throw new Error("Configure the Equipment Notes folder first.");
+    const requestPermission = options.requestPermission !== false;
+    const granted = requestPermission
+      ? await ensurePermission(equipmentNotesHandle, "readwrite")
+      : (await permissionState(equipmentNotesHandle, "readwrite")) === "granted";
+    setFolderStatuses((prev) => ({ ...prev, equipmentNotes: granted ? "granted" : "denied" }));
+    if (!granted) throw new Error("Equipment Notes folder permission was not granted.");
+
+    const propertiesNow = getProperties(targetDb);
+    const tenantsNow = getTenants(targetDb);
+    const files = await listMarkdownFiles(equipmentNotesHandle);
+    let count = 0;
+    for (const file of files) {
+      const parsed = parseEquipmentMarkdown(file.text);
+      const property = matchStructuredNoteProperty(propertiesNow, file, parsed, "_Equipment");
+      if (!property || (options.propertyId && property.id !== Number(options.propertyId))) continue;
+      deleteEquipmentForProperty(targetDb, property.id);
+      for (const row of parsed.rows) {
+        const tenant = row.tenant_name
+          ? tenantsNow.find((item) => item.property_id === property.id && propertyKey(item.tenant_name) === propertyKey(row.tenant_name))
+          : null;
+        upsertEquipment(targetDb, {
+          ...row,
+          id: null,
+          property_id: property.id,
+          tenant_id: tenant?.id || null
+        });
+        count += 1;
+      }
+    }
+    return { count };
+  }
+
   async function writeMonthlyUsageMarkdownFiles(targetDb, monthlyUsageHandle, options = {}) {
     if (!targetDb) throw new Error("Load a database before syncing monthly usage.");
     if (!monthlyUsageHandle) throw new Error("Configure the Monthly Usage folder first.");
@@ -692,6 +903,40 @@ export default function App() {
     return { count: propertiesNow.length };
   }
 
+  async function importMonthlyUsageMarkdownFiles(targetDb, monthlyUsageHandle, options = {}) {
+    if (!targetDb) throw new Error("Load a database before reading monthly usage.");
+    if (!monthlyUsageHandle) throw new Error("Configure the Monthly Usage folder first.");
+    const requestPermission = options.requestPermission !== false;
+    const granted = requestPermission
+      ? await ensurePermission(monthlyUsageHandle, "readwrite")
+      : (await permissionState(monthlyUsageHandle, "readwrite")) === "granted";
+    setFolderStatuses((prev) => ({ ...prev, monthlyUsage: granted ? "granted" : "denied" }));
+    if (!granted) throw new Error("Monthly Usage folder permission was not granted.");
+
+    const propertiesNow = getProperties(targetDb);
+    const tenantsNow = getTenants(targetDb);
+    const files = await listMarkdownFiles(monthlyUsageHandle);
+    let count = 0;
+    for (const file of files) {
+      const parsed = parseMonthlyUsageMarkdown(file.text);
+      const property = matchStructuredNoteProperty(propertiesNow, file, parsed, "_Monthly_Usage");
+      if (!property || (options.propertyId && property.id !== Number(options.propertyId))) continue;
+      deleteMonthlyUsageForProperty(targetDb, property.id);
+      for (const row of parsed.rows) {
+        const tenant = row.scope_type === "tenant"
+          ? tenantsNow.find((item) => item.property_id === property.id && propertyKey(item.tenant_name) === propertyKey(row.scope))
+          : null;
+        upsertMonthlyUsage(targetDb, {
+          ...row,
+          property_id: property.id,
+          tenant_id: tenant?.id || null
+        });
+        count += 1;
+      }
+    }
+    return { count };
+  }
+
   async function writeAdminTrackerMarkdownFiles(targetDb, adminTrackerHandle, options = {}) {
     if (!targetDb) throw new Error("Load a database before syncing admin tracker.");
     if (!adminTrackerHandle) throw new Error("Configure the Admin Tracker folder first.");
@@ -709,6 +954,35 @@ export default function App() {
       await writeTextIntoFolder(adminTrackerHandle, adminTrackerFilename(property), buildAdminTrackerMarkdown(property, rows));
     }
     return { count: propertiesNow.length };
+  }
+
+  async function importAdminTrackerMarkdownFiles(targetDb, adminTrackerHandle, options = {}) {
+    if (!targetDb) throw new Error("Load a database before reading admin tracker.");
+    if (!adminTrackerHandle) throw new Error("Configure the Admin Tracker folder first.");
+    const requestPermission = options.requestPermission !== false;
+    const granted = requestPermission
+      ? await ensurePermission(adminTrackerHandle, "readwrite")
+      : (await permissionState(adminTrackerHandle, "readwrite")) === "granted";
+    setFolderStatuses((prev) => ({ ...prev, adminTracker: granted ? "granted" : "denied" }));
+    if (!granted) throw new Error("Admin Tracker folder permission was not granted.");
+
+    const propertiesNow = getProperties(targetDb);
+    const files = await listMarkdownFiles(adminTrackerHandle);
+    let count = 0;
+    for (const file of files) {
+      const parsed = parseAdminTrackerMarkdown(file.text);
+      const property = matchStructuredNoteProperty(propertiesNow, file, parsed, "_Admin_Tracker");
+      if (!property || (options.propertyId && property.id !== Number(options.propertyId))) continue;
+      deleteAdminTrackerForProperty(targetDb, property.id);
+      for (const row of parsed.rows) {
+        upsertAdminTracker(targetDb, {
+          ...row,
+          property_id: property.id
+        });
+        count += 1;
+      }
+    }
+    return { count };
   }
 
   async function createDatabaseBackup() {
@@ -1080,19 +1354,28 @@ export default function App() {
           />
         )}
         {active === "tenants" && (
-          <TenantsEquipmentView
+          <TenantsView
+            ready={ready}
+            properties={properties}
+            selectedPropertyId={selectedPropertyId}
+            setSelectedPropertyId={setSelectedPropertyId}
+            tenants={data?.tenants || []}
+            tenantForm={tenantForm}
+            setTenantForm={setTenantForm}
+            saveTenant={saveTenant}
+            removeTenant={removeTenant}
+          />
+        )}
+        {active === "equipment" && (
+          <EquipmentView
             ready={ready}
             properties={properties}
             selectedPropertyId={selectedPropertyId}
             setSelectedPropertyId={setSelectedPropertyId}
             tenants={data?.tenants || []}
             equipment={data?.equipment || []}
-            tenantForm={tenantForm}
-            setTenantForm={setTenantForm}
             equipmentForm={equipmentForm}
             setEquipmentForm={setEquipmentForm}
-            saveTenant={saveTenant}
-            removeTenant={removeTenant}
             saveEquipment={saveEquipment}
             removeEquipment={removeEquipment}
           />
@@ -1251,25 +1534,25 @@ export default function App() {
 function WelcomeView({ ready }) {
   const workflow = [
     ["1", "Setup folders", "Connect the local database folder, Obsidian note folders, calculation evidence folder, and optional report/import folders."],
-    ["2", "Import or resume database", "Open ecm_register.db from your selected database folder or import an existing SQLite database into that folder."],
-    ["3", "Register portfolio data", "Add properties, tenants, equipment, monthly consumption, ECMs, and implemented savings from the app."],
-    ["4", "Sync evidence", "ECM notes, implemented saving notes, monthly usage, admin tracker, meeting notes, status quo timelines, open actions, and calculation files are written to your selected local folders."],
+    ["2", "Read Obsidian first", "Open ecm_register.db, then refresh the local cache from the configured Obsidian folders before analysis or reporting."],
+    ["3", "Register portfolio data", "Add properties, tenants, equipment, monthly consumption, ECMs, and implemented savings from the app so the matching Obsidian notes are updated."],
+    ["4", "Normalize evidence", "Property fields, tenant records, equipment records, ECM notes, implemented saving notes, monthly usage, admin tracker, meeting notes, status quo timelines, open actions, and calculation files stay in your selected local folders."],
     ["5", "Report and review", "Export Excel, CSV, PPTX, CRREM PDF, and ECM review workbooks from the Reports and Monthly Consumption pages."]
   ];
   const storageRows = [
-    ["Properties", "SQLite database", "Property name, address, floor area, tariffs, CRREM settings, carriers, renewables, notes."],
-    ["Tenants", "SQLite database", "Tenant names, tenant floor area, location labels, and tenant notes."],
-    ["Equipment", "SQLite database", "Equipment records, type, Brick class, utility, optional tenant/property relationship."],
-    ["ECMs", "SQLite database + ECM Notes folder", "Every ECM is stored in SQLite and written as a Markdown note in the ECM Notes folder."],
-    ["Implemented savings", "SQLite database + Implemented Savings Notes folder", "Measured saving periods are stored in SQLite and written as Markdown notes in the implemented-savings folder."],
-    ["Monthly consumption", "SQLite database + Monthly Usage folder", "Landlord and tenant monthly electricity, heating, and cooling values are stored in SQLite and mirrored to one Markdown table per building."],
+    ["Properties", "Property Notes folder + SQLite cache", "Property name, address, floor area, tariffs, CRREM settings, carriers, renewables, notes."],
+    ["Tenants", "Tenant Notes folder + SQLite cache", "Tenant names, tenant floor area, location IDs, location labels, and tenant notes."],
+    ["Equipment", "Equipment Notes folder + SQLite cache", "Equipment records, type, Brick class, utility, DEXMA IDs, and optional tenant/property relationship."],
+    ["ECMs", "ECM Notes folder + SQLite cache", "Every ECM is written as a Markdown note and cached in SQLite for reporting."],
+    ["Implemented savings", "Implemented Savings Notes folder + SQLite cache", "Measured saving periods are written as Markdown notes and cached in SQLite."],
+    ["Monthly consumption", "Monthly Usage folder + SQLite cache", "Landlord and tenant monthly electricity, heating, and cooling values live in one Markdown table per building and are cached for analysis."],
     ["Monthly meeting notes", "Monthly Meeting Notes folder", "Meeting notes are Markdown files in Obsidian. The app creates and edits the pre/post meeting sections."],
     ["Status quo timelines", "Status Quo folder", "Property status updates are Markdown files in Obsidian. The app adds or edits one month section per property."],
     ["Open actions", "Open Actions folder", "Property action lists are Markdown checklist files in Obsidian. The app creates open items and closes them with comments."],
-    ["Admin tracker", "SQLite database + Admin Tracker folder", "Monthly deliverable status is stored in SQLite and mirrored to one Markdown table per building."],
+    ["Admin tracker", "Admin Tracker folder + SQLite cache", "Monthly deliverable status lives in one Markdown table per building and is cached in SQLite."],
     ["Calculation evidence", "Calculation Files folder", "Uploaded calculation files are renamed and routed locally for traceability."],
     ["Reports", "Browser download / optional Reports folder", "Excel registers, usage CSV/Excel, ECM review workbooks, PPTX reports, and CRREM PDFs are exported locally."],
-    ["Database admin", "SQLite database + backup download", "Backups and database checks operate on the local SQLite file."]
+    ["Database admin", "SQLite cache + backup download", "Backups and database checks operate on the local SQLite cache."]
   ];
   return (
     <section className="section">
@@ -1302,11 +1585,11 @@ function WelcomeView({ ready }) {
           </p>
           <div className="artifact-callout">
             <strong>Markdown outputs</strong>
-            <p>ECMs, implemented savings, monthly usage, admin tracker, and monthly meeting notes are the records that become Obsidian `.md` files.</p>
+            <p>Properties, tenants, equipment, ECMs, implemented savings, monthly usage, admin tracker, and monthly meeting notes are the Obsidian `.md` records.</p>
           </div>
           <div className="artifact-callout">
-            <strong>Database records</strong>
-            <p>Properties, tenants, equipment, ECMs, implemented savings, monthly usage, and attachment references are stored in SQLite.</p>
+            <strong>SQLite cache</strong>
+            <p>SQLite is the local working cache used for filters, calculations, reports, and quick recovery from the Obsidian notes.</p>
           </div>
         </div>
       </div>
@@ -1605,31 +1888,32 @@ function PropertiesView({ ready, properties, form, setForm, save, remove }) {
   );
 }
 
-function TenantsEquipmentView(props) {
-  const { ready, properties, selectedPropertyId, setSelectedPropertyId, tenants, equipment, tenantForm, setTenantForm, equipmentForm, setEquipmentForm, saveTenant, removeTenant, saveEquipment, removeEquipment } = props;
+function TenantsView({ ready, properties, selectedPropertyId, setSelectedPropertyId, tenants, tenantForm, setTenantForm, saveTenant, removeTenant }) {
   if (!ready) return <EmptyState />;
   const scopedTenants = tenants.filter((tenant) => tenant.property_id === Number(selectedPropertyId));
-  const scopedEquipment = equipment.filter((item) => item.property_id === Number(selectedPropertyId));
   const setTenant = (key, value) => setTenantForm((prev) => ({ ...prev, [key]: value }));
-  const setEquip = (key, value) => setEquipmentForm((prev) => ({ ...prev, [key]: value }));
   return (
     <section className="section">
-      <h3>Tenants & Equipment</h3>
-      <div className="toolbar">
-        <select className="input" value={selectedPropertyId} onChange={(e) => {
-          setSelectedPropertyId(e.target.value);
-          setTenantForm({ ...EMPTY_TENANT, property_id: e.target.value });
-          setEquipmentForm({ ...EMPTY_EQUIPMENT, property_id: e.target.value });
-        }} style={{ maxWidth: 420 }}>
-          {properties.map((property) => <option key={property.id} value={property.id}>{property.name}</option>)}
-        </select>
+      <div className="section-head">
+        <div>
+          <h3>Tenants</h3>
+          <p className="muted">Tenant and location records live in the Tenant Notes folder and are cached in SQLite.</p>
+        </div>
       </div>
       <div className="grid two">
         <div className="card">
-          <h3>Tenants</h3>
           <form onSubmit={saveTenant}>
+            <Field label="Property">
+              <select value={selectedPropertyId} onChange={(event) => {
+                setSelectedPropertyId(event.target.value);
+                setTenantForm({ ...EMPTY_TENANT, property_id: event.target.value });
+              }}>
+                {properties.map((property) => <option key={property.id} value={property.id}>{property.name}</option>)}
+              </select>
+            </Field>
             <Field label="Tenant name"><input value={tenantForm.tenant_name} onChange={(e) => setTenant("tenant_name", e.target.value)} required /></Field>
             <div className="grid two">
+              <Field label="Tenant location ID"><input value={tenantForm.tenant_location_id || ""} onChange={(e) => setTenant("tenant_location_id", e.target.value)} /></Field>
               <Field label="Location label"><input value={tenantForm.location_label} onChange={(e) => setTenant("location_label", e.target.value)} /></Field>
               <Field label="Tenant floor area m²"><input type="number" step="0.01" value={tenantForm.tenant_floor_area} onChange={(e) => setTenant("tenant_floor_area", e.target.value)} /></Field>
             </div>
@@ -1639,15 +1923,44 @@ function TenantsEquipmentView(props) {
               <button className="btn" type="button" onClick={() => setTenantForm({ ...EMPTY_TENANT, property_id: selectedPropertyId })}>New Tenant</button>
             </div>
           </form>
+        </div>
+        <div className="card" style={{ overflow: "auto", maxHeight: 680 }}>
           <CompactTable rows={scopedTenants} columns={[
             ["tenant_name", "Tenant"],
+            ["tenant_location_id", "Location ID"],
             ["location_label", "Location"],
             ["tenant_floor_area", "Area m²"]
           ]} onEdit={(row) => setTenantForm({ ...row, property_id: String(row.property_id), tenant_floor_area: row.tenant_floor_area ?? "" })} onRemove={removeTenant} />
         </div>
-        <div className="card">
+      </div>
+    </section>
+  );
+}
+
+function EquipmentView({ ready, properties, selectedPropertyId, setSelectedPropertyId, tenants, equipment, equipmentForm, setEquipmentForm, saveEquipment, removeEquipment }) {
+  if (!ready) return <EmptyState />;
+  const scopedTenants = tenants.filter((tenant) => tenant.property_id === Number(selectedPropertyId));
+  const scopedEquipment = equipment.filter((item) => item.property_id === Number(selectedPropertyId));
+  const setEquip = (key, value) => setEquipmentForm((prev) => ({ ...prev, [key]: value }));
+  return (
+    <section className="section">
+      <div className="section-head">
+        <div>
           <h3>Equipment</h3>
+          <p className="muted">Equipment records live in the Equipment Notes folder and are cached in SQLite.</p>
+        </div>
+      </div>
+      <div className="grid two">
+        <div className="card">
           <form onSubmit={saveEquipment}>
+            <Field label="Property">
+              <select value={selectedPropertyId} onChange={(event) => {
+                setSelectedPropertyId(event.target.value);
+                setEquipmentForm({ ...EMPTY_EQUIPMENT, property_id: event.target.value });
+              }}>
+                {properties.map((property) => <option key={property.id} value={property.id}>{property.name}</option>)}
+              </select>
+            </Field>
             <Field label="Equipment name"><input value={equipmentForm.equipment_name} onChange={(e) => setEquip("equipment_name", e.target.value)} required /></Field>
             <div className="grid two">
               <Field label="Tenant scope"><select value={equipmentForm.tenant_id} onChange={(e) => setEquip("tenant_id", e.target.value)}><option value="">Whole property</option>{scopedTenants.map((tenant) => <option key={tenant.id} value={tenant.id}>{tenant.tenant_name} - {tenant.location_label}</option>)}</select></Field>
@@ -1656,6 +1969,8 @@ function TenantsEquipmentView(props) {
             <div className="grid two">
               <Field label="Equipment type"><select value={equipmentForm.equipment_type} onChange={(e) => setEquipmentForm((prev) => ({ ...prev, equipment_type: e.target.value, brick_class: EQUIPMENT_TYPE_TO_BRICK_CLASS[e.target.value] || "" }))}>{Object.keys(EQUIPMENT_TYPE_TO_BRICK_CLASS).map((type) => <option key={type}>{type}</option>)}</select></Field>
               <Field label="Brick class"><input value={equipmentForm.brick_class} onChange={(e) => setEquip("brick_class", e.target.value)} /></Field>
+              <Field label="DEXMA location ID"><input value={equipmentForm.dexma_location_id || ""} onChange={(e) => setEquip("dexma_location_id", e.target.value)} /></Field>
+              <Field label="DEXMA device ID"><input value={equipmentForm.dexma_device_id || ""} onChange={(e) => setEquip("dexma_device_id", e.target.value)} /></Field>
             </div>
             <Field label="Notes"><textarea value={equipmentForm.notes} onChange={(e) => setEquip("notes", e.target.value)} /></Field>
             <div className="toolbar">
@@ -1663,9 +1978,12 @@ function TenantsEquipmentView(props) {
               <button className="btn" type="button" onClick={() => setEquipmentForm({ ...EMPTY_EQUIPMENT, property_id: selectedPropertyId })}>New Equipment</button>
             </div>
           </form>
+        </div>
+        <div className="card" style={{ overflow: "auto", maxHeight: 680 }}>
           <CompactTable rows={scopedEquipment} columns={[
             ["equipment_name", "Equipment"],
             ["equipment_type", "Type"],
+            ["utility_type", "Utility"],
             ["brick_class", "Brick"]
           ]} onEdit={(row) => setEquipmentForm({ ...row, property_id: String(row.property_id), tenant_id: row.tenant_id ? String(row.tenant_id) : "" })} onRemove={removeEquipment} />
         </div>
@@ -2777,7 +3095,7 @@ function AdminTrackerView({ ready, properties, records, form, setForm, save }) {
       <div className="section-head">
         <div>
           <h3>Admin Tracker</h3>
-          <p className="muted">Lightweight monthly deliverable tracker stored only in the SQLite database.</p>
+          <p className="muted">Lightweight monthly deliverable tracker saved to the Admin Tracker folder and cached in SQLite.</p>
         </div>
       </div>
       <div className="admin-tracker-grid">
@@ -2873,7 +3191,16 @@ function DatabaseView({ ready, db, sqlText, setSqlText, runSql, sqlRows }) {
   );
 }
 
-function DatabaseAdminView({ ready, db, data, syncObsidianNotes, syncEcmMarkdownNotes, createDatabaseBackup, downloadDatabaseFile, busy }) {
+function DatabaseAdminView({
+  ready,
+  db,
+  data,
+  syncObsidianNotes,
+  syncEcmMarkdownNotes,
+  createDatabaseBackup,
+  downloadDatabaseFile,
+  busy
+}) {
   if (!ready) return <EmptyState />;
   const health = databaseHealth(db);
   const integrity = health.integrity?.[0]?.integrity_check || "unknown";
@@ -2891,12 +3218,12 @@ function DatabaseAdminView({ ready, db, data, syncObsidianNotes, syncEcmMarkdown
       </div>
       <div className="card" style={{ marginTop: 14 }}>
         <div className="toolbar">
-          <button className="btn primary" disabled={busy} onClick={syncObsidianNotes}>{busy ? "Syncing..." : "Sync DB Records to Obsidian"}</button>
+          <button className="btn primary" disabled={busy} onClick={syncObsidianNotes}>{busy ? "Syncing..." : "Refresh Cache From Obsidian"}</button>
           <button className="btn" disabled={busy} onClick={syncEcmMarkdownNotes}>Sync ECM Markdown Files</button>
           <button className="btn" onClick={createDatabaseBackup}>Create Local DB Backup</button>
           <button className="btn" onClick={downloadDatabaseFile}>Download DB File</button>
         </div>
-        <p className="muted">Sync writes ECM and implemented-savings Markdown files for existing database records and stores the generated filenames back into SQLite. Use the ECM-only sync when you only need the ECM folder updated.</p>
+        <p className="muted">Refresh reads configured Obsidian notes first, rebuilds the local SQLite cache where supported, then normalizes generated Markdown. Use the ECM-only sync when you only need the ECM folder updated.</p>
       </div>
       <div className="card" style={{ overflow: "auto", marginTop: 14 }}>
         <table>
@@ -3840,6 +4167,21 @@ function matchPropertyNoteFile(property, files, properties = [property]) {
 
   const knownNames = properties.map((item) => propertyKey(item.name));
   return files.find((file) => knownNames.includes(propertyKey(propertyNoteIdentity(file.text, file.name)))) || null;
+}
+
+function matchStructuredNoteProperty(properties, file, parsed = {}, suffix = "") {
+  if (parsed.property_id) {
+    const byId = properties.find((property) => Number(property.id) === Number(parsed.property_id));
+    if (byId) return byId;
+  }
+  if (parsed.property) {
+    const byName = properties.find((property) => propertyKey(property.name) === propertyKey(parsed.property));
+    if (byName) return byName;
+  }
+  const fileIdentity = String(file?.name || "").replace(/\.md$/i, "").replace(new RegExp(`${suffix}$`, "i"), "");
+  return properties.find((property) => propertyKey(property.name) === propertyKey(fileIdentity))
+    || properties.find((property) => propertyNameTokens(property.name).some((token) => propertyNameTokens(fileIdentity).includes(token)))
+    || null;
 }
 
 function mergePropertyNoteValues(property, parsed) {

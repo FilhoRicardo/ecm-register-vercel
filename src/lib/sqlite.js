@@ -226,12 +226,16 @@ export function deleteTenant(db, id) {
   db.run("DELETE FROM tenants WHERE id = ?", [id]);
 }
 
+export function deleteTenantsForProperty(db, propertyId) {
+  db.run("DELETE FROM tenants WHERE property_id = ?", [propertyId]);
+}
+
 export function upsertEquipment(db, input) {
   if (input.id) {
     db.run(
       `UPDATE equipment
        SET property_id=?, tenant_id=?, equipment_name=?, equipment_type=?, brick_class=?,
-           utility_type=?, notes=?, updated_at=CURRENT_TIMESTAMP
+           dexma_location_id=?, dexma_device_id=?, utility_type=?, notes=?, updated_at=CURRENT_TIMESTAMP
        WHERE id=?`,
       [
         input.property_id,
@@ -239,6 +243,8 @@ export function upsertEquipment(db, input) {
         input.equipment_name,
         input.equipment_type || "",
         input.brick_class || "",
+        input.dexma_location_id || "",
+        input.dexma_device_id || "",
         input.utility_type || "",
         input.notes || "",
         input.id
@@ -249,14 +255,16 @@ export function upsertEquipment(db, input) {
   db.run(
     `INSERT INTO equipment (
       property_id, tenant_id, equipment_name, equipment_type, brick_class,
-      utility_type, notes, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      dexma_location_id, dexma_device_id, utility_type, notes, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     [
       input.property_id,
       input.tenant_id || null,
       input.equipment_name,
       input.equipment_type || "",
       input.brick_class || "",
+      input.dexma_location_id || "",
+      input.dexma_device_id || "",
       input.utility_type || "",
       input.notes || ""
     ]
@@ -266,6 +274,10 @@ export function upsertEquipment(db, input) {
 
 export function deleteEquipment(db, id) {
   db.run("DELETE FROM equipment WHERE id = ?", [id]);
+}
+
+export function deleteEquipmentForProperty(db, propertyId) {
+  db.run("DELETE FROM equipment WHERE property_id = ?", [propertyId]);
 }
 
 export function getMonthlyUsage(db, propertyId = null) {
@@ -323,6 +335,10 @@ export function deleteMonthlyUsage(db, id) {
   db.run("DELETE FROM monthly_utility_usage WHERE id = ?", [id]);
 }
 
+export function deleteMonthlyUsageForProperty(db, propertyId) {
+  db.run("DELETE FROM monthly_utility_usage WHERE property_id = ?", [propertyId]);
+}
+
 export function getAdminTracker(db, propertyId = null) {
   return rows(
     db,
@@ -377,6 +393,10 @@ export function upsertAdminTracker(db, input) {
     params
   );
   return Number(one(db, "SELECT last_insert_rowid() AS id").id);
+}
+
+export function deleteAdminTrackerForProperty(db, propertyId) {
+  db.run("DELETE FROM monthly_admin_tracker WHERE property_id = ?", [propertyId]);
 }
 
 export function tableCount(db, table) {

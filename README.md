@@ -6,12 +6,12 @@ Vercel serves the React app. The browser asks the user to select local folders, 
 
 ## Storage Model
 
-- `ecm_register.db` remains the structured source of truth.
-- Properties are stored in SQLite and mirrored to structured bullet fields in Obsidian property notes.
-- ECMs are stored in SQLite and mirrored to Obsidian Markdown.
-- Implemented savings are stored in SQLite and mirrored to Obsidian Markdown.
-- Monthly consumption is stored in SQLite and mirrored to one Obsidian Markdown table per building.
-- Admin tracker rows are stored in SQLite and mirrored to one Obsidian Markdown table per building.
+- Obsidian Markdown is the main source of truth for project records.
+- `ecm_register.db` is the local structured cache the app uses for fast filtering, reports, and analysis.
+- Properties are read from Obsidian property notes and cached in SQLite.
+- Tenants are read from one Obsidian Markdown file per building and cached in SQLite.
+- Equipment is read from one Obsidian Markdown file per building and cached in SQLite.
+- ECMs, implemented savings, monthly consumption, and admin tracker rows are written to Obsidian and cached in SQLite.
 - Monthly meeting notes are written to Obsidian Markdown.
 - Calculation/reference files are copied locally with controlled filenames.
 - Reports remain downloads, with optional save-to-folder support.
@@ -22,6 +22,8 @@ The app asks for these folders:
 
 - Database Folder
 - Property Notes Folder
+- Tenant Notes Folder
+- Equipment Notes Folder
 - ECM Notes Folder
 - Implemented Savings Notes Folder
 - Monthly Meeting Notes Folder

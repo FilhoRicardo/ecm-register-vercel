@@ -8,6 +8,7 @@ import {
   deleteProperty,
   deleteTenant,
   getAttachments,
+  getAdminTracker,
   getEcms,
   getEquipment,
   getImplementedSavings,
@@ -33,7 +34,7 @@ import {
 } from "./lib/sqlite.js";
 import { downloadBlob, ensurePermission, idbDel, idbGet, idbSet, permissionState, supportsFileSystemAccess, writeFile } from "./lib/storage.js";
 import { listMarkdownFiles, routeCalculationFile, writeTextIntoFolder } from "./lib/files.js";
-import { buildEcmMarkdown, buildMeetingMarkdown, buildSavingMarkdown, ecmFilename, extractMeetingSections, meetingFilename, replaceMeetingSections, savingFilename } from "./lib/markdown.js";
+import { adminTrackerFilename, buildAdminTrackerMarkdown, buildEcmMarkdown, buildMeetingMarkdown, buildMonthlyUsageMarkdown, buildSavingMarkdown, ecmFilename, extractMeetingSections, meetingFilename, monthlyUsageFilename, replaceMeetingSections, savingFilename } from "./lib/markdown.js";
 import { downloadCrremPdfReport, downloadEcmReviewWorkbook, downloadExcelRegister, downloadPptxRegister, downloadUsageCsv, downloadUsageWorkbook, parseEcmReviewWorkbook } from "./lib/reports.js";
 import { EQUIPMENT_TYPE_TO_BRICK_CLASS, kwh, money, todayIso, utilityCost, yamlQuote } from "./lib/format.js";
 import {
@@ -55,6 +56,8 @@ const FOLDERS = [
   { key: "ecmNotes", label: "ECM Notes", required: true, description: "Obsidian folder for ECM Markdown files" },
   { key: "savingNotes", label: "Implemented Savings Notes", required: true, description: "Obsidian folder where implemented saving Markdown files are written" },
   { key: "meetingNotes", label: "Meeting Notes", required: true, description: "Obsidian folder for monthly meeting notes" },
+  { key: "monthlyUsage", label: "Monthly Usage", required: true, description: "Obsidian folder for one Markdown usage table per building" },
+  { key: "adminTracker", label: "Admin Tracker", required: true, description: "Obsidian folder for one Markdown admin tracker table per building" },
   { key: "statusQuo", label: "Status Quo", required: false, description: "Obsidian folder for property status quo timeline Markdown files" },
   { key: "openActions", label: "Open Actions", required: false, description: "Obsidian folder for property open action checklist Markdown files" },
   { key: "calculationFiles", label: "Calculations", required: true, description: "Local folder for ECM calculation evidence" },
@@ -238,6 +241,16 @@ export default function App() {
       await idbSet(`folder_${key}`, handle);
       setHandles((prev) => ({ ...prev, [key]: handle }));
       setFolderStatuses((prev) => ({ ...prev, [key]: "granted" }));
+      if (key === "monthlyUsage" && db) {
+        const synced = await writeMonthlyUsageMarkdownFiles(db, handle, { requestPermission: false });
+        notify(`Monthly Usage folder configured. Synced ${synced.count} usage files.`);
+        return;
+      }
+      if (key === "adminTracker" && db) {
+        const synced = await writeAdminTrackerMarkdownFiles(db, handle, { requestPermission: false });
+        notify(`Admin Tracker folder configured. Synced ${synced.count} tracker files.`);
+        return;
+      }
       notify("Folder configured.");
     } catch (error) {
       if (error?.name === "AbortError") return;
@@ -254,6 +267,16 @@ export default function App() {
       const granted = await ensurePermission(handle, "readwrite");
       const status = granted ? "granted" : await permissionState(handle, "readwrite");
       setFolderStatuses((prev) => ({ ...prev, [key]: status }));
+      if (granted && key === "monthlyUsage" && db) {
+        const synced = await writeMonthlyUsageMarkdownFiles(db, handle, { requestPermission: false });
+        notify(`Folder permission restored. Synced ${synced.count} usage files.`);
+        return;
+      }
+      if (granted && key === "adminTracker" && db) {
+        const synced = await writeAdminTrackerMarkdownFiles(db, handle, { requestPermission: false });
+        notify(`Folder permission restored. Synced ${synced.count} tracker files.`);
+        return;
+      }
       notify(granted ? "Folder permission restored." : "Folder permission was not granted.");
     } catch (error) {
       setSetupError(error.message || String(error));
@@ -322,10 +345,28 @@ export default function App() {
           ecmSyncMessage = ` ECM Markdown sync skipped: ${syncError.message || String(syncError)}`;
         }
       }
+      let usageSyncMessage = "";
+      if (allHandles.monthlyUsage && statuses.monthlyUsage === "granted") {
+        try {
+          const synced = await writeMonthlyUsageMarkdownFiles(nextDb, allHandles.monthlyUsage, { requestPermission: false });
+          usageSyncMessage = ` Synced ${synced.count} monthly usage files.`;
+        } catch (syncError) {
+          usageSyncMessage = ` Monthly usage sync skipped: ${syncError.message || String(syncError)}`;
+        }
+      }
+      let adminTrackerSyncMessage = "";
+      if (allHandles.adminTracker && statuses.adminTracker === "granted") {
+        try {
+          const synced = await writeAdminTrackerMarkdownFiles(nextDb, allHandles.adminTracker, { requestPermission: false });
+          adminTrackerSyncMessage = ` Synced ${synced.count} admin tracker files.`;
+        } catch (syncError) {
+          adminTrackerSyncMessage = ` Admin tracker sync skipped: ${syncError.message || String(syncError)}`;
+        }
+      }
       const nextData = getPortfolio(nextDb);
       setData(nextData);
       setActive("dashboard");
-      notify(`Workspace loaded: ${nextData.properties.length} properties, ${nextData.ecms.length} ECMs.${ecmSyncMessage}`);
+      notify(`Workspace loaded: ${nextData.properties.length} properties, ${nextData.ecms.length} ECMs.${ecmSyncMessage}${usageSyncMessage}${adminTrackerSyncMessage}`);
     } catch (error) {
       setSetupError(error.message || String(error));
       notify("Database load failed.");
@@ -442,12 +483,16 @@ export default function App() {
     });
     setUsageForm({ ...defaultUsageForm(), property_id: selectedPropertyId || nextUsage.property_id, scope_type: nextUsage.scope_type });
     await persist("Monthly usage saved.");
+    await syncMonthlyUsageMarkdown(Number(nextUsage.property_id));
   }
 
   async function removeUsage(id) {
     if (!window.confirm("Delete this monthly usage record?")) return;
+    const existing = (data?.monthlyUsage || []).find((row) => row.id === id);
     deleteMonthlyUsage(db, id);
     await persist("Monthly usage deleted.");
+    if (!existing) return;
+    await syncMonthlyUsageMarkdown(existing.property_id);
   }
 
   async function saveAdminTracker(event, override = {}) {
@@ -461,6 +506,7 @@ export default function App() {
     });
     setAdminForm((prev) => ({ ...prev, ...next }));
     await persist("Admin tracker saved.");
+    await syncAdminTrackerMarkdown(Number(next.property_id));
   }
 
   async function syncObsidianNotes() {
@@ -497,6 +543,24 @@ export default function App() {
     }
   }
 
+  async function syncMonthlyUsageMarkdown(propertyId = null) {
+    if (!handles.monthlyUsage) return;
+    try {
+      await writeMonthlyUsageMarkdownFiles(db, handles.monthlyUsage, { propertyId });
+    } catch (error) {
+      notify(`Monthly usage saved locally. Obsidian usage sync failed: ${error.message || String(error)}`);
+    }
+  }
+
+  async function syncAdminTrackerMarkdown(propertyId = null) {
+    if (!handles.adminTracker) return;
+    try {
+      await writeAdminTrackerMarkdownFiles(db, handles.adminTracker, { propertyId });
+    } catch (error) {
+      notify(`Admin tracker saved locally. Obsidian tracker sync failed: ${error.message || String(error)}`);
+    }
+  }
+
   async function syncEcmMarkdownNotes() {
     setBusy(true);
     try {
@@ -528,6 +592,44 @@ export default function App() {
       if (ecm.obsidian_filename !== filename) setEcmObsidianFilename(targetDb, ecm.id, filename);
     }
     return { count: ecmsNow.length };
+  }
+
+  async function writeMonthlyUsageMarkdownFiles(targetDb, monthlyUsageHandle, options = {}) {
+    if (!targetDb) throw new Error("Load a database before syncing monthly usage.");
+    if (!monthlyUsageHandle) throw new Error("Configure the Monthly Usage folder first.");
+    const requestPermission = options.requestPermission !== false;
+    const granted = requestPermission
+      ? await ensurePermission(monthlyUsageHandle, "readwrite")
+      : (await permissionState(monthlyUsageHandle, "readwrite")) === "granted";
+    setFolderStatuses((prev) => ({ ...prev, monthlyUsage: granted ? "granted" : "denied" }));
+    if (!granted) throw new Error("Monthly Usage folder permission was not granted.");
+
+    const propertiesNow = getProperties(targetDb).filter((property) => !options.propertyId || property.id === Number(options.propertyId));
+    const usageNow = getMonthlyUsage(targetDb);
+    for (const property of propertiesNow) {
+      const rows = usageNow.filter((row) => row.property_id === property.id);
+      await writeTextIntoFolder(monthlyUsageHandle, monthlyUsageFilename(property), buildMonthlyUsageMarkdown(property, rows));
+    }
+    return { count: propertiesNow.length };
+  }
+
+  async function writeAdminTrackerMarkdownFiles(targetDb, adminTrackerHandle, options = {}) {
+    if (!targetDb) throw new Error("Load a database before syncing admin tracker.");
+    if (!adminTrackerHandle) throw new Error("Configure the Admin Tracker folder first.");
+    const requestPermission = options.requestPermission !== false;
+    const granted = requestPermission
+      ? await ensurePermission(adminTrackerHandle, "readwrite")
+      : (await permissionState(adminTrackerHandle, "readwrite")) === "granted";
+    setFolderStatuses((prev) => ({ ...prev, adminTracker: granted ? "granted" : "denied" }));
+    if (!granted) throw new Error("Admin Tracker folder permission was not granted.");
+
+    const propertiesNow = getProperties(targetDb).filter((property) => !options.propertyId || property.id === Number(options.propertyId));
+    const recordsNow = getAdminTracker(targetDb);
+    for (const property of propertiesNow) {
+      const rows = recordsNow.filter((row) => row.property_id === property.id);
+      await writeTextIntoFolder(adminTrackerHandle, adminTrackerFilename(property), buildAdminTrackerMarkdown(property, rows));
+    }
+    return { count: propertiesNow.length };
   }
 
   async function createDatabaseBackup() {
@@ -1072,7 +1174,7 @@ function WelcomeView({ ready }) {
     ["1", "Setup folders", "Connect the local database folder, Obsidian note folders, calculation evidence folder, and optional report/import folders."],
     ["2", "Import or resume database", "Open ecm_register.db from your selected database folder or import an existing SQLite database into that folder."],
     ["3", "Register portfolio data", "Add properties, tenants, equipment, monthly consumption, ECMs, and implemented savings from the app."],
-    ["4", "Sync evidence", "ECM notes, implemented saving notes, meeting notes, status quo timelines, open actions, and calculation files are written to your selected local folders."],
+    ["4", "Sync evidence", "ECM notes, implemented saving notes, monthly usage, admin tracker, meeting notes, status quo timelines, open actions, and calculation files are written to your selected local folders."],
     ["5", "Report and review", "Export Excel, CSV, PPTX, CRREM PDF, and ECM review workbooks from the Reports and Monthly Consumption pages."]
   ];
   const storageRows = [
@@ -1081,11 +1183,11 @@ function WelcomeView({ ready }) {
     ["Equipment", "SQLite database", "Equipment records, type, Brick class, utility, optional tenant/property relationship."],
     ["ECMs", "SQLite database + ECM Notes folder", "Every ECM is stored in SQLite and written as a Markdown note in the ECM Notes folder."],
     ["Implemented savings", "SQLite database + Implemented Savings Notes folder", "Measured saving periods are stored in SQLite and written as Markdown notes in the implemented-savings folder."],
-    ["Monthly consumption", "SQLite database", "Landlord and tenant monthly electricity, heating, and cooling values."],
+    ["Monthly consumption", "SQLite database + Monthly Usage folder", "Landlord and tenant monthly electricity, heating, and cooling values are stored in SQLite and mirrored to one Markdown table per building."],
     ["Monthly meeting notes", "Monthly Meeting Notes folder", "Meeting notes are Markdown files in Obsidian. The app creates and edits the pre/post meeting sections."],
     ["Status quo timelines", "Status Quo folder", "Property status updates are Markdown files in Obsidian. The app adds or edits one month section per property."],
     ["Open actions", "Open Actions folder", "Property action lists are Markdown checklist files in Obsidian. The app creates open items and closes them with comments."],
-    ["Admin tracker", "SQLite database", "Monthly deliverable status by property: Docunite report, ECM report, Status Quo, pre-meeting notes, and post-meeting notes."],
+    ["Admin tracker", "SQLite database + Admin Tracker folder", "Monthly deliverable status is stored in SQLite and mirrored to one Markdown table per building."],
     ["Calculation evidence", "Calculation Files folder", "Uploaded calculation files are renamed and routed locally for traceability."],
     ["Reports", "Browser download / optional Reports folder", "Excel registers, usage CSV/Excel, ECM review workbooks, PPTX reports, and CRREM PDFs are exported locally."],
     ["Database admin", "SQLite database + backup download", "Backups and database checks operate on the local SQLite file."]
@@ -1121,7 +1223,7 @@ function WelcomeView({ ready }) {
           </p>
           <div className="artifact-callout">
             <strong>Markdown outputs</strong>
-            <p>ECMs, implemented savings, and monthly meeting notes are the records that become Obsidian `.md` files.</p>
+            <p>ECMs, implemented savings, monthly usage, admin tracker, and monthly meeting notes are the records that become Obsidian `.md` files.</p>
           </div>
           <div className="artifact-callout">
             <strong>Database records</strong>

@@ -14,6 +14,75 @@ export function meetingFilename(property, reportMonth) {
   return `${reportMonth}_${slug(property?.name || "Property")}_Monthly_ECM_Meeting.md`;
 }
 
+export function monthlyUsageFilename(property) {
+  return `${slug(property?.name || "Property")}_Monthly_Usage.md`;
+}
+
+export function adminTrackerFilename(property) {
+  return `${slug(property?.name || "Property")}_Admin_Tracker.md`;
+}
+
+export function buildAdminTrackerMarkdown(property, records = []) {
+  const rows = [...records].sort((a, b) => {
+    const yearDiff = Number(a.admin_year || 0) - Number(b.admin_year || 0);
+    if (yearDiff) return yearDiff;
+    return Number(a.admin_month || 0) - Number(b.admin_month || 0);
+  });
+  const tableRows = rows.length
+    ? rows.map((row) => `| ${adminPeriod(row)} | ${checkbox(row.docunite_report)} | ${checkbox(row.ecm_report)} | ${checkbox(row.status_quo)} | ${checkbox(row.pre_meeting_notes)} | ${checkbox(row.post_meeting_notes)} | ${escapeTable(row.comments)} |`).join("\n")
+    : "| _No admin tracker records yet_ |  |  |  |  |  |  |";
+
+  return `---
+record_type: admin_tracker
+property: "[[${property?.name || ""}]]"
+property_id: ${property?.id || ""}
+date_modified: ${yamlQuote(new Date().toISOString())}
+tags:
+  - ecm
+  - admin-tracker
+  - union-module-4
+---
+
+# ${property?.name || "Property"} - Admin Tracker
+
+| Month | Docunite report | ECM report | Status Quo | Pre Meeting notes | Post meeting notes | Comments |
+|---|---:|---:|---:|---:|---:|---|
+${tableRows}
+`;
+}
+
+export function buildMonthlyUsageMarkdown(property, usageRows = []) {
+  const rows = [...usageRows].sort((a, b) => {
+    const monthCompare = String(a.usage_month || "").localeCompare(String(b.usage_month || ""));
+    if (monthCompare) return monthCompare;
+    return String(a.scope_type || "").localeCompare(String(b.scope_type || ""));
+  });
+  const tableRows = rows.length
+    ? rows.map((row) => {
+        const scope = row.scope_type === "tenant" ? row.tenant_name || `Tenant ${row.tenant_id || ""}` : "Landlord";
+        return `| ${escapeTable(row.usage_month)} | ${escapeTable(scope)} | ${numberCell(row.electricity_kwh)} | ${numberCell(row.heating_kwh)} | ${numberCell(row.cooling_kwh)} | ${escapeTable(row.notes)} |`;
+      }).join("\n")
+    : "| _No records yet_ |  |  |  |  |  |";
+
+  return `---
+record_type: monthly_usage
+property: "[[${property?.name || ""}]]"
+property_id: ${property?.id || ""}
+date_modified: ${yamlQuote(new Date().toISOString())}
+tags:
+  - ecm
+  - monthly-usage
+  - union-module-4
+---
+
+# ${property?.name || "Property"} - Monthly Usage
+
+| Month | Scope | Electricity kWh | Heating kWh | Cooling kWh | Notes |
+|---|---|---:|---:|---:|---|
+${tableRows}
+`;
+}
+
 export function buildEcmMarkdown(ecm, property, attachments = []) {
   const cost = utilityCost(property, ecm.utility_type);
   const annual = Number(ecm.energy_saving_kwh || 0) * cost;
@@ -83,6 +152,24 @@ ${ecm.notes || "_No additional notes recorded._"}
 
 - ${new Date().toLocaleString()}: Note written by ECM Register.
 `;
+}
+
+function escapeTable(value) {
+  return String(value ?? "").replace(/\|/g, "\\|").replace(/\n/g, " ").trim();
+}
+
+function numberCell(value) {
+  return Number(value || 0).toFixed(2);
+}
+
+function checkbox(value) {
+  return value ? "Yes" : "No";
+}
+
+function adminPeriod(row) {
+  const year = row.admin_year || "";
+  const month = String(row.admin_month || "").padStart(2, "0");
+  return year && month ? `${year}-${month}` : "";
 }
 
 export function buildSavingMarkdown(saving, ecm, property) {

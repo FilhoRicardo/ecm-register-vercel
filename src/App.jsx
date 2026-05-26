@@ -2357,7 +2357,7 @@ function DataView({ ready, properties, selectedPropertyId, setSelectedPropertyId
       <div className="data-view-grid">
         <div className="card">
           <h3>Data Health</h3>
-          <p className="muted">Green means a reading is present for that month, year, property, scope, and utility.</p>
+          <p className="muted">Rows are months. Columns are the selected years. Green means a reading is present for that month, year, property, scope, and utility.</p>
           <DataHealthTable years={selectedYears} health={health} />
         </div>
         <div className="card data-chart-card">
@@ -2365,6 +2365,7 @@ function DataView({ ready, properties, selectedPropertyId, setSelectedPropertyId
             <h3>{dataViewUtilityLabel(utility)} comparison</h3>
             <span className="muted">kWh/month</span>
           </div>
+          <UsageComparisonLegend years={selectedYears} primaryYear={primaryYear} />
           <UsageComparisonChart years={selectedYears} primaryYear={primaryYear} series={series} />
         </div>
       </div>
@@ -3415,6 +3416,19 @@ function DataHealthTable({ years, health }) {
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function UsageComparisonLegend({ years, primaryYear }) {
+  const comparisonYears = years.filter((year) => year !== primaryYear);
+  const colors = ["#a78bfa", "#22d3ee"];
+  return (
+    <div className="toolbar" style={{ margin: "4px 0 10px" }}>
+      <span className="pill"><span style={{ color: "#38bdf8" }}>■</span> {primaryYear} bars</span>
+      {comparisonYears.map((year, index) => (
+        <span className="pill" key={year}><span style={{ color: colors[index % colors.length] }}>●</span> {year} line</span>
+      ))}
     </div>
   );
 }

@@ -277,6 +277,9 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
   padding: 10px 12px;
   font-size: 13px;
 }
+.error {
+  color: #fecaca;
+}
 .setup-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

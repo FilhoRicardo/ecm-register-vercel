@@ -14,7 +14,7 @@ Vercel serves the React app. The browser asks the user to select local folders, 
 - ECMs, implemented savings, monthly consumption, and admin tracker rows are written to and read from Obsidian.
 - Monthly meeting notes are written to Obsidian Markdown.
 - Calculation/reference files are copied locally with controlled filenames.
-- Reports remain downloads, with optional save-to-folder support.
+- Reports are generated as browser downloads and can be saved wherever the user chooses.
 
 ## Onboarding Folders
 
@@ -28,9 +28,9 @@ The app asks for these folders:
 - Monthly Meeting Notes Folder
 - Monthly Usage Folder
 - Admin Tracker Folder
+- Status Quo Folder
+- Open Actions Folder
 - Calculation Files Folder
-- Reports Folder
-- Imports Folder
 
 Chrome or Microsoft Edge is required because the app uses the File System Access API.
 

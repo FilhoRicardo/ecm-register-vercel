@@ -62,11 +62,9 @@ const FOLDERS = [
   { key: "meetingNotes", label: "Meeting Notes", required: true, description: "Obsidian folder for monthly meeting notes" },
   { key: "monthlyUsage", label: "Monthly Usage", required: true, description: "Obsidian folder for one Markdown usage table per building" },
   { key: "adminTracker", label: "Admin Tracker", required: true, description: "Obsidian folder for one Markdown admin tracker table per building" },
-  { key: "statusQuo", label: "Status Quo", required: false, description: "Obsidian folder for property status quo timeline Markdown files" },
-  { key: "openActions", label: "Open Actions", required: false, description: "Obsidian folder for property open action checklist Markdown files" },
-  { key: "calculationFiles", label: "Calculations", required: true, description: "Local folder for ECM calculation evidence" },
-  { key: "reports", label: "Reports", required: false, description: "Optional folder for generated reports" },
-  { key: "imports", label: "Imports", required: false, description: "Optional folder for source import files" }
+  { key: "statusQuo", label: "Status Quo", required: true, description: "Obsidian folder for property status quo timeline Markdown files" },
+  { key: "openActions", label: "Open Actions", required: true, description: "Obsidian folder for property open action checklist Markdown files" },
+  { key: "calculationFiles", label: "Calculations", required: true, description: "Local folder for ECM calculation evidence" }
 ];
 
 const NAV = [
@@ -1530,7 +1528,7 @@ function WelcomeView({ ready }) {
     ["Open actions", "Open Actions folder", "Property action lists are Markdown checklist files in Obsidian. The app creates open items and closes them with comments."],
     ["Admin tracker", "Admin Tracker folder + in-memory cache", "Monthly deliverable status lives in one Markdown table per building and is cached in memory."],
     ["Calculation evidence", "Calculation Files folder", "Uploaded calculation files are renamed and routed locally for traceability."],
-    ["Reports", "Browser download / optional Reports folder", "Excel registers, usage CSV/Excel, ECM review workbooks, PPTX reports, and CRREM PDFs are exported locally."],
+    ["Reports", "Browser download", "Excel registers, usage CSV/Excel, ECM review workbooks, PPTX reports, and CRREM PDFs are exported locally."],
     ["Obsidian sync", "Obsidian folders + in-memory cache", "Refresh rebuilds the working cache from Markdown and normalizes generated notes."]
   ];
   return (

@@ -1,7 +1,6 @@
 import initSqlJs from "sql.js";
 import sqlWasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 import { migrate } from "./schema.js";
-import { writeBinaryFile } from "./storage.js";
 import { utilityCost } from "./format.js";
 
 let SQL = null;
@@ -14,26 +13,11 @@ export async function loadSqlJs() {
   return SQL;
 }
 
-export async function openDatabaseFromHandle(fileHandle) {
+export async function openEmptyDatabase() {
   const sql = await loadSqlJs();
-  const file = await fileHandle.getFile();
-  const bytes = file.size ? new Uint8Array(await file.arrayBuffer()) : null;
-  const db = bytes ? new sql.Database(bytes) : new sql.Database();
+  const db = new sql.Database();
   migrate(db);
   return db;
-}
-
-export async function openDatabaseFromFile(file) {
-  const sql = await loadSqlJs();
-  const bytes = new Uint8Array(await file.arrayBuffer());
-  const db = new sql.Database(bytes);
-  migrate(db);
-  return db;
-}
-
-export async function saveDatabase(db, fileHandle) {
-  const bytes = db.export();
-  await writeBinaryFile(fileHandle, bytes);
 }
 
 function rows(db, sql, params = []) {

@@ -21,10 +21,8 @@ import {
   getProperties,
   getTenants,
   insertAttachment,
-  openDatabaseFromFile,
-  openDatabaseFromHandle,
+  openEmptyDatabase,
   runSelect,
-  saveDatabase,
   setEcmObsidianFilename,
   setSavingObsidianFilename,
   tableCount,
@@ -36,9 +34,9 @@ import {
   upsertProperty,
   upsertTenant
 } from "./lib/sqlite.js";
-import { downloadBlob, ensurePermission, idbDel, idbGet, idbSet, permissionState, supportsFileSystemAccess, writeFile } from "./lib/storage.js";
+import { ensurePermission, idbDel, idbGet, idbSet, permissionState, supportsFileSystemAccess, writeFile } from "./lib/storage.js";
 import { listMarkdownFiles, routeCalculationFile, writeTextIntoFolder } from "./lib/files.js";
-import { adminTrackerFilename, buildAdminTrackerMarkdown, buildEcmMarkdown, buildEquipmentMarkdown, buildMeetingMarkdown, buildMonthlyUsageMarkdown, buildPropertyNoteMarkdown, buildSavingMarkdown, buildTenantsMarkdown, ecmFilename, equipmentFilename, extractMeetingSections, meetingFilename, monthlyUsageFilename, parseAdminTrackerMarkdown, parseEquipmentMarkdown, parseMonthlyUsageMarkdown, parsePropertyFieldsTable, parseTenantsMarkdown, propertyNoteIdentity, propertyNotesFilename, replaceMeetingSections, savingFilename, tenantsFilename, upsertPropertyFieldsTable } from "./lib/markdown.js";
+import { adminTrackerFilename, buildAdminTrackerMarkdown, buildEcmMarkdown, buildEquipmentMarkdown, buildMeetingMarkdown, buildMonthlyUsageMarkdown, buildPropertyNoteMarkdown, buildSavingMarkdown, buildTenantsMarkdown, ecmFilename, equipmentFilename, extractMeetingSections, meetingFilename, monthlyUsageFilename, parseAdminTrackerMarkdown, parseEcmMarkdown, parseEquipmentMarkdown, parseMonthlyUsageMarkdown, parsePropertyFieldsTable, parseSavingMarkdown, parseTenantsMarkdown, propertyNoteIdentity, propertyNotesFilename, replaceMeetingSections, savingFilename, tenantsFilename, upsertPropertyFieldsTable } from "./lib/markdown.js";
 import { downloadCrremPdfReport, downloadEcmReviewWorkbook, downloadExcelRegister, downloadPptxRegister, downloadUsageCsv, downloadUsageWorkbook, parseEcmReviewWorkbook } from "./lib/reports.js";
 import { EQUIPMENT_TYPE_TO_BRICK_CLASS, kwh, money, todayIso, utilityCost, yamlQuote } from "./lib/format.js";
 import {
@@ -56,7 +54,6 @@ import {
 } from "./lib/crrem.js";
 
 const FOLDERS = [
-  { key: "database", label: "Database", required: true, description: "Where ecm_register.db is stored and backed up" },
   { key: "propertyNotes", label: "Property Notes", required: true, description: "Obsidian folder for one structured property table per building" },
   { key: "tenantNotes", label: "Tenant Notes", required: true, description: "Obsidian folder for one tenant mirror per building" },
   { key: "equipmentNotes", label: "Equipment Notes", required: true, description: "Obsidian folder for one equipment mirror per building" },
@@ -91,8 +88,8 @@ const NAV = [
   ["benchmark", "\u{1F3C1} Benchmark"],
   ["crrem", "🌍 CRREM Plot"],
   ["reports", "📤 Reports"],
-  ["database", "🧪 SQLite Lab"],
-  ["admin", "🛡️ Database Admin"]
+  ["database", "🧪 Cache Lab"],
+  ["admin", "🛡️ Obsidian Sync"]
 ];
 
 const RESPONSIBLE_OPTIONS = [
@@ -170,7 +167,6 @@ export default function App() {
   const [handles, setHandles] = useState({});
   const [folderStatuses, setFolderStatuses] = useState({});
   const [db, setDb] = useState(null);
-  const [dbFileHandle, setDbFileHandle] = useState(null);
   const [data, setData] = useState(null);
   const [selectedPropertyId, setSelectedPropertyId] = useState("");
   const [selectedEcmId, setSelectedEcmId] = useState("");
@@ -221,7 +217,7 @@ export default function App() {
     return selectedProperty ? data.ecms.filter((ecm) => ecm.property_id === selectedProperty.id) : data.ecms;
   }, [data, selectedProperty]);
   const implementedEcms = useMemo(() => (data?.ecms || []).filter((ecm) => ecm.status === "Implemented"), [data]);
-  const ready = Boolean(db && dbFileHandle);
+  const ready = Boolean(db);
 
   async function boot() {
     const next = {};
@@ -238,7 +234,8 @@ export default function App() {
     }
     setHandles(next);
     setFolderStatuses(statuses);
-    if (next.database && statuses.database === "granted") await openDatabaseFolder(next.database, next);
+    const requiredReady = FOLDERS.filter((folder) => folder.required).every((folder) => next[folder.key] && statuses[folder.key] === "granted");
+    if (requiredReady) await loadObsidianWorkspace(next, { requestAll: false });
   }
 
   async function configureFolder(key) {
@@ -337,11 +334,6 @@ export default function App() {
       delete next[key];
       return next;
     });
-    if (key === "database") {
-      setDb(null);
-      setDbFileHandle(null);
-      setData(null);
-    }
     notify("Folder assignment cleared.");
   }
 
@@ -350,37 +342,32 @@ export default function App() {
     setHandles({});
     setFolderStatuses({});
     setDb(null);
-    setDbFileHandle(null);
     setData(null);
     setActive("setup");
     notify("All folder assignments cleared.");
   }
 
-  async function openDatabaseFolder(folderHandle, allHandles = handles, options = {}) {
+  async function loadObsidianWorkspace(allHandles = handles, options = {}) {
     try {
       setBusy(true);
       setSetupError("");
-      if (!folderHandle) throw new Error("Select the Database Folder first.");
       const statuses = {};
       for (const [key, handle] of Object.entries(allHandles)) {
         if (!handle) continue;
-        const shouldRequest = key === "database" || options.requestAll;
-        const granted = shouldRequest
+        const granted = options.requestAll
           ? await ensurePermission(handle, "readwrite")
           : (await permissionState(handle, "readwrite")) === "granted";
         statuses[key] = granted ? "granted" : await permissionState(handle, "readwrite");
       }
       setFolderStatuses((prev) => ({ ...prev, ...statuses }));
-      if (statuses.database !== "granted") throw new Error("Database folder permission was not granted.");
-      const fileHandle = await folderHandle.getFileHandle("ecm_register.db", { create: true });
-      const nextDb = await openDatabaseFromHandle(fileHandle);
+      const missingRequired = FOLDERS.filter((folder) => folder.required && (!allHandles[folder.key] || statuses[folder.key] !== "granted"));
+      if (missingRequired.length) throw new Error(`Required folder permission needed: ${missingRequired.map((folder) => folder.label).join(", ")}.`);
+      const nextDb = await openEmptyDatabase();
       setDb(nextDb);
-      setDbFileHandle(fileHandle);
       let propertySyncMessage = "";
       if (allHandles.propertyNotes && statuses.propertyNotes === "granted") {
         try {
           const synced = await syncPropertyNotesFolder(nextDb, allHandles.propertyNotes, { requestPermission: false });
-          await saveDatabase(nextDb, fileHandle);
           propertySyncMessage = ` Synced ${synced.count} property files.`;
         } catch (syncError) {
           propertySyncMessage = ` Property note sync skipped: ${syncError.message || String(syncError)}`;
@@ -409,11 +396,21 @@ export default function App() {
       let ecmSyncMessage = "";
       if (allHandles.ecmNotes && statuses.ecmNotes === "granted") {
         try {
+          const imported = await importEcmMarkdownFiles(nextDb, allHandles.ecmNotes, { requestPermission: false });
           const synced = await writeAllEcmMarkdownFiles(nextDb, allHandles.ecmNotes, { requestPermission: false });
-          await saveDatabase(nextDb, fileHandle);
-          ecmSyncMessage = ` Synced ${synced.count} ECM Markdown notes.`;
+          ecmSyncMessage = ` Read ${imported.count} ECM notes and normalized ${synced.count} ECM Markdown notes.`;
         } catch (syncError) {
           ecmSyncMessage = ` ECM Markdown sync skipped: ${syncError.message || String(syncError)}`;
+        }
+      }
+      let savingSyncMessage = "";
+      if (allHandles.savingNotes && statuses.savingNotes === "granted") {
+        try {
+          const imported = await importSavingMarkdownFiles(nextDb, allHandles.savingNotes, { requestPermission: false });
+          const synced = await writeSavingMarkdownFiles(nextDb, allHandles.savingNotes, { requestPermission: false });
+          savingSyncMessage = ` Read ${imported.count} implemented-saving notes and normalized ${synced.count} saving notes.`;
+        } catch (syncError) {
+          savingSyncMessage = ` Implemented-savings sync skipped: ${syncError.message || String(syncError)}`;
         }
       }
       let usageSyncMessage = "";
@@ -439,53 +436,16 @@ export default function App() {
       const nextData = getPortfolio(nextDb);
       setData(nextData);
       setActive("dashboard");
-      notify(`Workspace loaded: ${nextData.properties.length} properties, ${nextData.ecms.length} ECMs.${propertySyncMessage}${tenantSyncMessage}${equipmentSyncMessage}${ecmSyncMessage}${usageSyncMessage}${adminTrackerSyncMessage}`);
+      notify(`Workspace loaded from Obsidian: ${nextData.properties.length} properties, ${nextData.ecms.length} ECMs.${propertySyncMessage}${tenantSyncMessage}${equipmentSyncMessage}${ecmSyncMessage}${savingSyncMessage}${usageSyncMessage}${adminTrackerSyncMessage}`);
     } catch (error) {
       setSetupError(error.message || String(error));
-      notify("Database load failed.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function importDatabase() {
-    try {
-      setBusy(true);
-      setSetupError("");
-      if (!handles.database) throw new Error("Configure the Database Folder first.");
-      const databaseGranted = await ensurePermission(handles.database, "readwrite");
-      setFolderStatuses((prev) => ({ ...prev, database: databaseGranted ? "granted" : "denied" }));
-      if (!databaseGranted) throw new Error("Database folder permission was not granted.");
-      const [fileHandle] = await window.showOpenFilePicker({
-        types: [{ description: "SQLite database", accept: { "application/octet-stream": [".db", ".sqlite", ".sqlite3"], "application/vnd.sqlite3": [".db", ".sqlite", ".sqlite3"] } }]
-      });
-      const file = await fileHandle.getFile();
-      const importedDb = await openDatabaseFromFile(file);
-      const target = await handles.database.getFileHandle("ecm_register.db", { create: true });
-      await saveDatabase(importedDb, target);
-      setDb(importedDb);
-      setDbFileHandle(target);
-      const nextData = getPortfolio(importedDb);
-      setData(nextData);
-      setSelectedPropertyId(nextData.properties[0]?.id ? String(nextData.properties[0].id) : "");
-      setEcmForm((prev) => ({ ...prev, property_id: nextData.properties[0]?.id ? String(nextData.properties[0].id) : "" }));
-      setMeetingForm((prev) => ({ ...prev, property_id: nextData.properties[0]?.id ? String(nextData.properties[0].id) : "" }));
-      setTenantForm((prev) => ({ ...prev, property_id: nextData.properties[0]?.id ? String(nextData.properties[0].id) : "" }));
-      setEquipmentForm((prev) => ({ ...prev, property_id: nextData.properties[0]?.id ? String(nextData.properties[0].id) : "" }));
-      setUsageForm((prev) => ({ ...prev, property_id: nextData.properties[0]?.id ? String(nextData.properties[0].id) : "" }));
-      setActive("dashboard");
-      notify(`Database imported: ${nextData.properties.length} properties, ${nextData.ecms.length} ECMs.`);
-    } catch (error) {
-      if (error?.name === "AbortError") return;
-      setSetupError(error.message || String(error));
-      notify("Database import failed.");
+      notify("Workspace load failed.");
     } finally {
       setBusy(false);
     }
   }
 
   async function persist(message = "Saved.") {
-    await saveDatabase(db, dbFileHandle);
     setData(getPortfolio(db));
     notify(message);
   }
@@ -596,63 +556,7 @@ export default function App() {
   }
 
   async function syncObsidianNotes() {
-    if (!handles.ecmNotes || !handles.savingNotes) {
-      notify("Configure ECM Notes and Implemented Savings Notes folders first.");
-      return;
-    }
-    setBusy(true);
-    try {
-      const ecmPermission = await ensurePermission(handles.ecmNotes, "readwrite");
-      const savingPermission = await ensurePermission(handles.savingNotes, "readwrite");
-      setFolderStatuses((prev) => ({
-        ...prev,
-        ecmNotes: ecmPermission ? "granted" : "denied",
-        savingNotes: savingPermission ? "granted" : "denied"
-      }));
-      if (!ecmPermission || !savingPermission) throw new Error("Obsidian note folder permissions were not granted.");
-      const ecmSync = await writeAllEcmMarkdownFiles(db, handles.ecmNotes, { requestPermission: false });
-      const propertiesNow = getProperties(db);
-      const ecmsNow = getEcms(db);
-      const savingsNow = getImplementedSavings(db);
-      for (const saving of savingsNow) {
-        const ecm = ecmsNow.find((item) => item.id === saving.ecm_id);
-        const property = propertiesNow.find((item) => item.id === saving.property_id);
-        const filename = saving.obsidian_filename || savingFilename({ ...saving, ...ecm });
-        await writeTextIntoFolder(handles.savingNotes, filename, buildSavingMarkdown(saving, ecm, property));
-        setSavingObsidianFilename(db, saving.id, filename);
-      }
-      const extraSyncs = [];
-      if (handles.propertyNotes) {
-        const synced = await writePropertyMarkdownFiles(db, handles.propertyNotes);
-        extraSyncs.push(`${synced.count} property files`);
-      }
-      if (handles.tenantNotes) {
-        await importTenantMarkdownFiles(db, handles.tenantNotes);
-        const synced = await writeTenantMarkdownFiles(db, handles.tenantNotes);
-        extraSyncs.push(`${synced.count} tenant files`);
-      }
-      if (handles.equipmentNotes) {
-        await importEquipmentMarkdownFiles(db, handles.equipmentNotes);
-        const synced = await writeEquipmentMarkdownFiles(db, handles.equipmentNotes);
-        extraSyncs.push(`${synced.count} equipment files`);
-      }
-      if (handles.monthlyUsage) {
-        await importMonthlyUsageMarkdownFiles(db, handles.monthlyUsage);
-        const synced = await writeMonthlyUsageMarkdownFiles(db, handles.monthlyUsage);
-        extraSyncs.push(`${synced.count} monthly usage files`);
-      }
-      if (handles.adminTracker) {
-        await importAdminTrackerMarkdownFiles(db, handles.adminTracker);
-        const synced = await writeAdminTrackerMarkdownFiles(db, handles.adminTracker);
-        extraSyncs.push(`${synced.count} admin tracker files`);
-      }
-      const extraMessage = extraSyncs.length ? `, plus ${extraSyncs.join(", ")}` : "";
-      await persist(`Synced ${ecmSync.count} ECM notes and ${savingsNow.length} implemented-savings notes${extraMessage} to Obsidian.`);
-    } catch (error) {
-      notify(error.message || String(error));
-    } finally {
-      setBusy(false);
-    }
+    await loadObsidianWorkspace(handles, { requestAll: true });
   }
 
   async function syncPropertyNotesMarkdown(propertyId = null) {
@@ -713,7 +617,7 @@ export default function App() {
   }
 
   async function writeAllEcmMarkdownFiles(targetDb, ecmNotesHandle, options = {}) {
-    if (!targetDb) throw new Error("Load a database before syncing ECM notes.");
+    if (!targetDb) throw new Error("Load a workspace before syncing ECM notes.");
     if (!ecmNotesHandle) throw new Error("Configure the ECM Notes folder first.");
     const requestPermission = options.requestPermission !== false;
     const granted = requestPermission
@@ -739,7 +643,7 @@ export default function App() {
   }
 
   async function importPropertyMarkdownTables(targetDb, propertyNotesHandle, options = {}) {
-    if (!targetDb) throw new Error("Load a database before syncing property notes.");
+    if (!targetDb) throw new Error("Load a workspace before syncing property notes.");
     if (!propertyNotesHandle) throw new Error("Configure the Property Notes folder first.");
     const requestPermission = options.requestPermission !== false;
     const granted = requestPermission
@@ -754,14 +658,23 @@ export default function App() {
       const parsed = parsePropertyFieldsTable(file.text);
       if (!parsed) continue;
       const property = matchPropertyNote(propertiesNow, file, parsed);
-      if (!property) continue;
-      upsertProperty(targetDb, mergePropertyNoteValues(property, parsed));
+      if (property) {
+        upsertProperty(targetDb, mergePropertyNoteValues(property, parsed));
+      } else {
+        const name = parsed.name || propertyNoteIdentity(file.text, file.name).replace(/\.md$/i, "");
+        upsertProperty(targetDb, {
+          ...EMPTY_PROPERTY,
+          ...parsed,
+          id: null,
+          name
+        });
+      }
       propertiesNow = getProperties(targetDb);
     }
   }
 
   async function writePropertyMarkdownFiles(targetDb, propertyNotesHandle, options = {}) {
-    if (!targetDb) throw new Error("Load a database before syncing property notes.");
+    if (!targetDb) throw new Error("Load a workspace before syncing property notes.");
     if (!propertyNotesHandle) throw new Error("Configure the Property Notes folder first.");
     const requestPermission = options.requestPermission !== false;
     const granted = requestPermission
@@ -782,7 +695,7 @@ export default function App() {
   }
 
   async function writeTenantMarkdownFiles(targetDb, tenantNotesHandle, options = {}) {
-    if (!targetDb) throw new Error("Load a database before syncing tenants.");
+    if (!targetDb) throw new Error("Load a workspace before syncing tenants.");
     if (!tenantNotesHandle) throw new Error("Configure the Tenant Notes folder first.");
     const requestPermission = options.requestPermission !== false;
     const granted = requestPermission
@@ -801,7 +714,7 @@ export default function App() {
   }
 
   async function importTenantMarkdownFiles(targetDb, tenantNotesHandle, options = {}) {
-    if (!targetDb) throw new Error("Load a database before reading tenants.");
+    if (!targetDb) throw new Error("Load a workspace before reading tenants.");
     if (!tenantNotesHandle) throw new Error("Configure the Tenant Notes folder first.");
     const requestPermission = options.requestPermission !== false;
     const granted = requestPermission
@@ -831,7 +744,7 @@ export default function App() {
   }
 
   async function writeEquipmentMarkdownFiles(targetDb, equipmentNotesHandle, options = {}) {
-    if (!targetDb) throw new Error("Load a database before syncing equipment.");
+    if (!targetDb) throw new Error("Load a workspace before syncing equipment.");
     if (!equipmentNotesHandle) throw new Error("Configure the Equipment Notes folder first.");
     const requestPermission = options.requestPermission !== false;
     const granted = requestPermission
@@ -850,7 +763,7 @@ export default function App() {
   }
 
   async function importEquipmentMarkdownFiles(targetDb, equipmentNotesHandle, options = {}) {
-    if (!targetDb) throw new Error("Load a database before reading equipment.");
+    if (!targetDb) throw new Error("Load a workspace before reading equipment.");
     if (!equipmentNotesHandle) throw new Error("Configure the Equipment Notes folder first.");
     const requestPermission = options.requestPermission !== false;
     const granted = requestPermission
@@ -885,7 +798,7 @@ export default function App() {
   }
 
   async function writeMonthlyUsageMarkdownFiles(targetDb, monthlyUsageHandle, options = {}) {
-    if (!targetDb) throw new Error("Load a database before syncing monthly usage.");
+    if (!targetDb) throw new Error("Load a workspace before syncing monthly usage.");
     if (!monthlyUsageHandle) throw new Error("Configure the Monthly Usage folder first.");
     const requestPermission = options.requestPermission !== false;
     const granted = requestPermission
@@ -904,7 +817,7 @@ export default function App() {
   }
 
   async function importMonthlyUsageMarkdownFiles(targetDb, monthlyUsageHandle, options = {}) {
-    if (!targetDb) throw new Error("Load a database before reading monthly usage.");
+    if (!targetDb) throw new Error("Load a workspace before reading monthly usage.");
     if (!monthlyUsageHandle) throw new Error("Configure the Monthly Usage folder first.");
     const requestPermission = options.requestPermission !== false;
     const granted = requestPermission
@@ -938,7 +851,7 @@ export default function App() {
   }
 
   async function writeAdminTrackerMarkdownFiles(targetDb, adminTrackerHandle, options = {}) {
-    if (!targetDb) throw new Error("Load a database before syncing admin tracker.");
+    if (!targetDb) throw new Error("Load a workspace before syncing admin tracker.");
     if (!adminTrackerHandle) throw new Error("Configure the Admin Tracker folder first.");
     const requestPermission = options.requestPermission !== false;
     const granted = requestPermission
@@ -957,7 +870,7 @@ export default function App() {
   }
 
   async function importAdminTrackerMarkdownFiles(targetDb, adminTrackerHandle, options = {}) {
-    if (!targetDb) throw new Error("Load a database before reading admin tracker.");
+    if (!targetDb) throw new Error("Load a workspace before reading admin tracker.");
     if (!adminTrackerHandle) throw new Error("Configure the Admin Tracker folder first.");
     const requestPermission = options.requestPermission !== false;
     const granted = requestPermission
@@ -985,33 +898,89 @@ export default function App() {
     return { count };
   }
 
-  async function createDatabaseBackup() {
-    const filename = `ecm_register_backup_${new Date().toISOString().replace(/[:.]/g, "-")}.db`;
-    try {
-      if (!db) throw new Error("Load a database before creating a backup.");
-      const bytes = db.export();
-      if (!handles.database) {
-        downloadBlob(new Blob([bytes], { type: "application/octet-stream" }), filename);
-        notify(`Database folder is not configured. Backup downloaded instead: ${filename}`);
-        return;
-      }
-      const databaseGranted = await ensurePermission(handles.database, "readwrite");
-      setFolderStatuses((prev) => ({ ...prev, database: databaseGranted ? "granted" : "denied" }));
-      if (!databaseGranted) {
-        downloadBlob(new Blob([bytes], { type: "application/octet-stream" }), filename);
-        notify(`Database folder permission was not granted. Backup downloaded instead: ${filename}`);
-        return;
-      }
-      const handle = await handles.database.getFileHandle(filename, { create: true });
-      await saveDatabase(db, handle);
-      notify(`Backup created in Database Folder: ${filename}`);
-    } catch (error) {
-      notify(error.message || String(error));
+  async function importEcmMarkdownFiles(targetDb, ecmNotesHandle, options = {}) {
+    if (!targetDb) throw new Error("Load a workspace before reading ECM notes.");
+    if (!ecmNotesHandle) throw new Error("Configure the ECM Notes folder first.");
+    const requestPermission = options.requestPermission !== false;
+    const granted = requestPermission
+      ? await ensurePermission(ecmNotesHandle, "readwrite")
+      : (await permissionState(ecmNotesHandle, "readwrite")) === "granted";
+    setFolderStatuses((prev) => ({ ...prev, ecmNotes: granted ? "granted" : "denied" }));
+    if (!granted) throw new Error("ECM Notes folder permission was not granted.");
+
+    const propertiesNow = getProperties(targetDb);
+    const files = await listMarkdownFiles(ecmNotesHandle);
+    let count = 0;
+    for (const file of files) {
+      const parsed = parseEcmMarkdown(file.text);
+      if (!parsed) continue;
+      const property = matchParsedProperty(propertiesNow, file, parsed);
+      if (!property) continue;
+      const id = upsertEcm(targetDb, {
+        ...parsed,
+        id: null,
+        property_id: property.id
+      });
+      setEcmObsidianFilename(targetDb, id, file.name);
+      count += 1;
     }
+    return { count };
   }
 
-  function downloadDatabaseFile() {
-    downloadBlob(new Blob([db.export()], { type: "application/octet-stream" }), "ecm_register.db");
+  async function importSavingMarkdownFiles(targetDb, savingNotesHandle, options = {}) {
+    if (!targetDb) throw new Error("Load a workspace before reading implemented savings.");
+    if (!savingNotesHandle) throw new Error("Configure the Implemented Savings Notes folder first.");
+    const requestPermission = options.requestPermission !== false;
+    const granted = requestPermission
+      ? await ensurePermission(savingNotesHandle, "readwrite")
+      : (await permissionState(savingNotesHandle, "readwrite")) === "granted";
+    setFolderStatuses((prev) => ({ ...prev, savingNotes: granted ? "granted" : "denied" }));
+    if (!granted) throw new Error("Implemented Savings Notes folder permission was not granted.");
+
+    const propertiesNow = getProperties(targetDb);
+    const ecmsNow = getEcms(targetDb);
+    const files = await listMarkdownFiles(savingNotesHandle);
+    let count = 0;
+    for (const file of files) {
+      const parsed = parseSavingMarkdown(file.text);
+      if (!parsed) continue;
+      const property = matchParsedProperty(propertiesNow, file, parsed);
+      if (!property) continue;
+      const ecm = matchParsedEcm(ecmsNow, parsed, property);
+      if (!ecm) continue;
+      const id = upsertImplementedSaving(targetDb, {
+        ...parsed,
+        id: null,
+        property_id: property.id,
+        ecm_id: ecm.id
+      });
+      setSavingObsidianFilename(targetDb, id, file.name);
+      count += 1;
+    }
+    return { count };
+  }
+
+  async function writeSavingMarkdownFiles(targetDb, savingNotesHandle, options = {}) {
+    if (!targetDb) throw new Error("Load a workspace before syncing implemented savings.");
+    if (!savingNotesHandle) throw new Error("Configure the Implemented Savings Notes folder first.");
+    const requestPermission = options.requestPermission !== false;
+    const granted = requestPermission
+      ? await ensurePermission(savingNotesHandle, "readwrite")
+      : (await permissionState(savingNotesHandle, "readwrite")) === "granted";
+    setFolderStatuses((prev) => ({ ...prev, savingNotes: granted ? "granted" : "denied" }));
+    if (!granted) throw new Error("Implemented Savings Notes folder permission was not granted.");
+
+    const propertiesNow = getProperties(targetDb);
+    const ecmsNow = getEcms(targetDb);
+    const savingsNow = getImplementedSavings(targetDb);
+    for (const saving of savingsNow) {
+      const ecm = ecmsNow.find((item) => item.id === saving.ecm_id);
+      const property = propertiesNow.find((item) => item.id === saving.property_id);
+      const filename = saving.obsidian_filename || savingFilename({ ...saving, ...ecm });
+      await writeTextIntoFolder(savingNotesHandle, filename, buildSavingMarkdown(saving, ecm, property));
+      if (saving.obsidian_filename !== filename) setSavingObsidianFilename(targetDb, saving.id, filename);
+    }
+    return { count: savingsNow.length };
   }
 
   async function saveEcm(event) {
@@ -1046,7 +1015,7 @@ export default function App() {
       setCalcFile(null);
       setSelectedEcmId(String(id));
       setEcmForm({ ...ecm, property_id: String(ecm.property_id), approved: Boolean(ecm.approved), investment_eur: ecm.investment_eur ?? "", energy_saving_kwh: ecm.energy_saving_kwh ?? "" });
-      await persist("ECM saved to database and Obsidian.");
+      await persist("ECM saved to Obsidian.");
     } catch (error) {
       notify(error.message || String(error));
     } finally {
@@ -1067,11 +1036,24 @@ export default function App() {
   }
 
   async function removeEcm() {
-    if (!selectedEcmId || !window.confirm("Delete this ECM from the database? The Obsidian note is not deleted automatically.")) return;
+    if (!selectedEcmId || !window.confirm("Delete this ECM from the workspace? The Obsidian note will be removed when available.")) return;
+    const existing = data.ecms.find((item) => item.id === Number(selectedEcmId));
+    if (existing?.obsidian_filename) {
+      if (!handles.ecmNotes || !(await ensurePermission(handles.ecmNotes, "readwrite"))) {
+        notify("ECM Notes folder permission was not granted.");
+        return;
+      }
+      try {
+        await handles.ecmNotes.removeEntry(existing.obsidian_filename);
+      } catch (error) {
+        if (error?.name !== "NotFoundError") throw error;
+      }
+      setFolderStatuses((prev) => ({ ...prev, ecmNotes: "granted" }));
+    }
     deleteEcm(db, Number(selectedEcmId));
     setSelectedEcmId("");
     setEcmForm({ ...EMPTY_ECM, property_id: selectedProperty?.id || "" });
-    await persist("ECM deleted from database.");
+    await persist("ECM deleted from workspace.");
   }
 
   function ecmSequence(ecms, ecm) {
@@ -1109,7 +1091,7 @@ export default function App() {
       await writeTextIntoFolder(handles.savingNotes, filename, buildSavingMarkdown(saved, ecm, property));
       setSavingObsidianFilename(db, id, filename);
       setSavingForm(defaultSavingForm());
-      await persist("Implemented saving saved to database and Obsidian.");
+      await persist("Implemented saving saved to Obsidian.");
     } catch (error) {
       notify(error.message || String(error));
     } finally {
@@ -1119,7 +1101,7 @@ export default function App() {
 
   async function removeImplementedSaving(id) {
     const saving = data.implementedSavings.find((item) => item.id === Number(id));
-    if (!saving || !window.confirm("Delete this implemented saving from the database and remove its Obsidian note if available?")) return;
+    if (!saving || !window.confirm("Delete this implemented saving from the workspace and remove its Obsidian note if available?")) return;
     setBusy(true);
     try {
       deleteImplementedSaving(db, saving.id);
@@ -1294,7 +1276,7 @@ export default function App() {
       <aside className="sidebar">
         <div className="brand">
           <h1>⚡ ECM Register</h1>
-          <p>Browser-local SQLite workspace</p>
+          <p>Obsidian-backed local workspace</p>
         </div>
         <nav className="nav">
           {NAV.map(([key, label]) => (
@@ -1305,7 +1287,7 @@ export default function App() {
           ))}
         </nav>
         <div className="status-panel">
-          <span className="pill">{ready ? "Database online" : "Setup required"}</span>
+          <span className="pill">{ready ? "Workspace loaded" : "Setup required"}</span>
           <div>Vercel hosts the app only. Files stay local.</div>
         </div>
       </aside>
@@ -1334,8 +1316,7 @@ export default function App() {
             configureFolder={configureFolder}
             forgetFolder={forgetFolder}
             forgetAllFolders={forgetAllFolders}
-            importDatabase={importDatabase}
-            loadDatabase={() => openDatabaseFolder(handles.database, handles, { requestAll: true })}
+            loadDatabase={() => loadObsidianWorkspace(handles, { requestAll: true })}
             data={data}
             setupError={setupError}
             busy={busy}
@@ -1521,8 +1502,6 @@ export default function App() {
             data={data}
             syncObsidianNotes={syncObsidianNotes}
             syncEcmMarkdownNotes={syncEcmMarkdownNotes}
-            createDatabaseBackup={createDatabaseBackup}
-            downloadDatabaseFile={downloadDatabaseFile}
             busy={busy}
           />
         )}
@@ -1533,26 +1512,26 @@ export default function App() {
 
 function WelcomeView({ ready }) {
   const workflow = [
-    ["1", "Setup folders", "Connect the local database folder, Obsidian note folders, calculation evidence folder, and optional report/import folders."],
-    ["2", "Read Obsidian first", "Open ecm_register.db, then refresh the local cache from the configured Obsidian folders before analysis or reporting."],
+    ["1", "Setup folders", "Connect the Obsidian note folders, calculation evidence folder, and optional report/import folders."],
+    ["2", "Read Obsidian first", "Resume the workspace to rebuild the local cache from the configured Obsidian folders before analysis or reporting."],
     ["3", "Register portfolio data", "Add properties, tenants, equipment, monthly consumption, ECMs, and implemented savings from the app so the matching Obsidian notes are updated."],
     ["4", "Normalize evidence", "Property fields, tenant records, equipment records, ECM notes, implemented saving notes, monthly usage, admin tracker, meeting notes, status quo timelines, open actions, and calculation files stay in your selected local folders."],
     ["5", "Report and review", "Export Excel, CSV, PPTX, CRREM PDF, and ECM review workbooks from the Reports and Monthly Consumption pages."]
   ];
   const storageRows = [
-    ["Properties", "Property Notes folder + SQLite cache", "Property name, address, floor area, tariffs, CRREM settings, carriers, renewables, notes."],
-    ["Tenants", "Tenant Notes folder + SQLite cache", "Tenant names, tenant floor area, location IDs, location labels, and tenant notes."],
-    ["Equipment", "Equipment Notes folder + SQLite cache", "Equipment records, type, Brick class, utility, DEXMA IDs, and optional tenant/property relationship."],
-    ["ECMs", "ECM Notes folder + SQLite cache", "Every ECM is written as a Markdown note and cached in SQLite for reporting."],
-    ["Implemented savings", "Implemented Savings Notes folder + SQLite cache", "Measured saving periods are written as Markdown notes and cached in SQLite."],
-    ["Monthly consumption", "Monthly Usage folder + SQLite cache", "Landlord and tenant monthly electricity, heating, and cooling values live in one Markdown table per building and are cached for analysis."],
+    ["Properties", "Property Notes folder + in-memory cache", "Property name, address, floor area, tariffs, CRREM settings, carriers, renewables, notes."],
+    ["Tenants", "Tenant Notes folder + in-memory cache", "Tenant names, tenant floor area, location IDs, location labels, and tenant notes."],
+    ["Equipment", "Equipment Notes folder + in-memory cache", "Equipment records, type, Brick class, utility, DEXMA IDs, and optional tenant/property relationship."],
+    ["ECMs", "ECM Notes folder + in-memory cache", "Every ECM is written as a Markdown note and cached in memory for reporting."],
+    ["Implemented savings", "Implemented Savings Notes folder + in-memory cache", "Measured saving periods are written as Markdown notes and cached in memory."],
+    ["Monthly consumption", "Monthly Usage folder + in-memory cache", "Landlord and tenant monthly electricity, heating, and cooling values live in one Markdown table per building and are cached for analysis."],
     ["Monthly meeting notes", "Monthly Meeting Notes folder", "Meeting notes are Markdown files in Obsidian. The app creates and edits the pre/post meeting sections."],
     ["Status quo timelines", "Status Quo folder", "Property status updates are Markdown files in Obsidian. The app adds or edits one month section per property."],
     ["Open actions", "Open Actions folder", "Property action lists are Markdown checklist files in Obsidian. The app creates open items and closes them with comments."],
-    ["Admin tracker", "Admin Tracker folder + SQLite cache", "Monthly deliverable status lives in one Markdown table per building and is cached in SQLite."],
+    ["Admin tracker", "Admin Tracker folder + in-memory cache", "Monthly deliverable status lives in one Markdown table per building and is cached in memory."],
     ["Calculation evidence", "Calculation Files folder", "Uploaded calculation files are renamed and routed locally for traceability."],
     ["Reports", "Browser download / optional Reports folder", "Excel registers, usage CSV/Excel, ECM review workbooks, PPTX reports, and CRREM PDFs are exported locally."],
-    ["Database admin", "SQLite cache + backup download", "Backups and database checks operate on the local SQLite cache."]
+    ["Obsidian sync", "Obsidian folders + in-memory cache", "Refresh rebuilds the working cache from Markdown and normalizes generated notes."]
   ];
   return (
     <section className="section">
@@ -1561,7 +1540,7 @@ function WelcomeView({ ready }) {
           <span className="eyebrow">START HERE</span>
           <h3>ECM Register Workflow</h3>
           <p className="muted">
-            This app is a browser-hosted interface for local files. Vercel serves the app, but your database, Obsidian notes, calculation evidence, and reports stay on your machine.
+            This app is a browser-hosted interface for local files. Vercel serves the app, but your Obsidian notes, calculation evidence, and reports stay on your machine.
           </p>
           <div className="workflow-list">
             {workflow.map(([step, title, text]) => (
@@ -1580,16 +1559,16 @@ function WelcomeView({ ready }) {
           <h3>{ready ? "Workspace is loaded" : "Setup required"}</h3>
           <p className="muted">
             {ready
-              ? "Your local database is open. You can work from any tab and exports will download locally."
-              : "Go to Setup, connect the required folders, then resume or import ecm_register.db."}
+              ? "Your Obsidian-backed workspace is loaded. You can work from any tab and exports will download locally."
+              : "Go to Setup, connect the required folders, then resume the workspace."}
           </p>
           <div className="artifact-callout">
             <strong>Markdown outputs</strong>
             <p>Properties, tenants, equipment, ECMs, implemented savings, monthly usage, admin tracker, and monthly meeting notes are the Obsidian `.md` records.</p>
           </div>
           <div className="artifact-callout">
-            <strong>SQLite cache</strong>
-            <p>SQLite is the local working cache used for filters, calculations, reports, and quick recovery from the Obsidian notes.</p>
+            <strong>In-memory cache</strong>
+            <p>The browser rebuilds a temporary working cache from Obsidian for filters, calculations, and reports.</p>
           </div>
         </div>
       </div>
@@ -1701,7 +1680,7 @@ function WorkflowGuideView() {
   );
 }
 
-function SetupView({ handles, folderStatuses, configureFolder, forgetFolder, forgetAllFolders, importDatabase, loadDatabase, data, setupError, busy, ready }) {
+function SetupView({ handles, folderStatuses, configureFolder, forgetFolder, forgetAllFolders, loadDatabase, data, setupError, busy, ready }) {
   const requiredFolders = FOLDERS.filter((folder) => folder.required);
   const requiredConfigured = requiredFolders.every((folder) => handles[folder.key]);
   const configuredCount = FOLDERS.filter((folder) => handles[folder.key]).length;
@@ -1748,16 +1727,15 @@ function SetupView({ handles, folderStatuses, configureFolder, forgetFolder, for
         </div>
         <p className="setup-note">{configuredCount} of {FOLDERS.length} folders selected. Required folders: {requiredConfigured ? "complete" : "not complete"}.</p>
         <div className="setup-footer">
-          <button className="btn primary" disabled={!handles.database || busy} onClick={loadDatabase}>{busy ? "Working..." : ready ? "Done" : "Resume Workspace"}</button>
-          <button className="btn" disabled={!handles.database || busy} onClick={importDatabase}>Import Existing .db</button>
+          <button className="btn primary" disabled={!requiredConfigured || busy} onClick={loadDatabase}>{busy ? "Working..." : ready ? "Reload From Obsidian" : "Resume Workspace"}</button>
           <button className="btn danger" type="button" disabled={busy || !configuredCount} onClick={forgetAllFolders}>Forget all folders</button>
         </div>
         <p className="muted setup-note">
           {ready
-            ? "ecm_register.db is open. You can go to Dashboard or continue changing folder assignments."
+            ? "Workspace cache is loaded from Obsidian. You can go to Dashboard or continue changing folder assignments."
             : requiredConfigured
-              ? "Required folders are remembered. Resume Workspace restores permissions and opens ecm_register.db."
-              : "Select the required folders first, then import your existing .db or resume the workspace."}
+              ? "Required folders are remembered. Resume Workspace restores permissions and reads the Obsidian notes."
+              : "Select the required Obsidian folders first, then resume the workspace."}
         </p>
       </div>
     </section>
@@ -1897,7 +1875,7 @@ function TenantsView({ ready, properties, selectedPropertyId, setSelectedPropert
       <div className="section-head">
         <div>
           <h3>Tenants</h3>
-          <p className="muted">Tenant and location records live in the Tenant Notes folder and are cached in SQLite.</p>
+          <p className="muted">Tenant and location records live in the Tenant Notes folder and are cached in memory.</p>
         </div>
       </div>
       <div className="grid two">
@@ -1947,7 +1925,7 @@ function EquipmentView({ ready, properties, selectedPropertyId, setSelectedPrope
       <div className="section-head">
         <div>
           <h3>Equipment</h3>
-          <p className="muted">Equipment records live in the Equipment Notes folder and are cached in SQLite.</p>
+          <p className="muted">Equipment records live in the Equipment Notes folder and are cached in memory.</p>
         </div>
       </div>
       <div className="grid two">
@@ -3096,7 +3074,7 @@ function AdminTrackerView({ ready, properties, records, form, setForm, save }) {
       <div className="section-head">
         <div>
           <h3>Admin Tracker</h3>
-          <p className="muted">Lightweight monthly deliverable tracker saved to the Admin Tracker folder and cached in SQLite.</p>
+          <p className="muted">Lightweight monthly deliverable tracker saved to the Admin Tracker folder and cached in memory.</p>
         </div>
       </div>
       <div className="admin-tracker-grid">
@@ -3172,7 +3150,7 @@ function DatabaseView({ ready, db, sqlText, setSqlText, runSql, sqlRows }) {
   const tables = ["properties", "tenants", "equipment", "ecms", "monthly_utility_usage", "monthly_admin_tracker", "ecm_measured_savings", "ecm_attachments"];
   return (
     <section className="section">
-      <h3>Database</h3>
+      <h3>Cache Lab</h3>
       <div className="grid four">
         {tables.slice(0, 4).map((table) => <Kpi key={table} label={table} value={tableCount(db, table)} />)}
       </div>
@@ -3198,8 +3176,6 @@ function DatabaseAdminView({
   data,
   syncObsidianNotes,
   syncEcmMarkdownNotes,
-  createDatabaseBackup,
-  downloadDatabaseFile,
   busy
 }) {
   if (!ready) return <EmptyState />;
@@ -3210,7 +3186,7 @@ function DatabaseAdminView({
   const missingSavingNotes = (data?.implementedSavings || []).filter((saving) => !saving.obsidian_filename).length;
   return (
     <section className="section">
-      <h3>Database Admin</h3>
+      <h3>Obsidian Sync</h3>
       <div className="grid four">
         <Kpi label="Integrity" value={integrity} />
         <Kpi label="FK issues" value={foreignKeyIssues} />
@@ -3221,10 +3197,8 @@ function DatabaseAdminView({
         <div className="toolbar">
           <button className="btn primary" disabled={busy} onClick={syncObsidianNotes}>{busy ? "Syncing..." : "Refresh Cache From Obsidian"}</button>
           <button className="btn" disabled={busy} onClick={syncEcmMarkdownNotes}>Sync ECM Markdown Files</button>
-          <button className="btn" onClick={createDatabaseBackup}>Create Local DB Backup</button>
-          <button className="btn" onClick={downloadDatabaseFile}>Download DB File</button>
         </div>
-        <p className="muted">Refresh reads configured Obsidian notes first, rebuilds the local SQLite cache where supported, then normalizes generated Markdown. Use the ECM-only sync when you only need the ECM folder updated.</p>
+        <p className="muted">Refresh reads configured Obsidian notes, rebuilds the in-memory cache, then normalizes generated Markdown. Use the ECM-only sync when you only need the ECM folder updated.</p>
       </div>
       <div className="card" style={{ overflow: "auto", marginTop: 14 }}>
         <table>
@@ -4198,6 +4172,31 @@ function matchStructuredNoteProperty(properties, file, parsed = {}, suffix = "")
     || null;
 }
 
+function matchParsedProperty(properties, file, parsed = {}, suffix = "") {
+  if (parsed.property) {
+    const byName = properties.find((property) => propertyKey(property.name) === propertyKey(parsed.property));
+    if (byName) return byName;
+  }
+  return matchStructuredNoteProperty(properties, file, parsed, suffix);
+}
+
+function matchParsedEcm(ecms, parsed = {}, property = null) {
+  const scoped = property ? ecms.filter((ecm) => Number(ecm.property_id) === Number(property.id)) : ecms;
+  if (parsed.ecm_ref) {
+    const byRef = scoped.find((ecm) => propertyKey(ecm.ref) === propertyKey(parsed.ecm_ref));
+    if (byRef) return byRef;
+  }
+  if (parsed.ecm_title) {
+    const byTitle = scoped.find((ecm) => propertyKey(ecm.title) === propertyKey(parsed.ecm_title));
+    if (byTitle) return byTitle;
+  }
+  if (parsed.ecm_id) {
+    const byId = scoped.find((ecm) => Number(ecm.id) === Number(parsed.ecm_id));
+    if (byId) return byId;
+  }
+  return null;
+}
+
 function mergePropertyNoteValues(property, parsed) {
   const next = { ...property };
   for (const key of [
@@ -4240,7 +4239,7 @@ function carrierLabel(options, value) {
 }
 
 function EmptyState() {
-  return <section className="section"><div className="card"><h3>Setup Required</h3><p className="muted">Configure the local folders and open or import an ECM database first.</p></div></section>;
+  return <section className="section"><div className="card"><h3>Setup Required</h3><p className="muted">Configure the required Obsidian folders and resume the workspace first.</p></div></section>;
 }
 
 function defaultSavingForm() {

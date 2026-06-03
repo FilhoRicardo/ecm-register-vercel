@@ -358,6 +358,27 @@ ${ecm.notes || "_No additional notes recorded._"}
 `;
 }
 
+export function parseEcmMarkdown(markdown = "") {
+  if (frontmatterValue(markdown, "record_type") !== "ecm") return null;
+  const heading = String(markdown || "").match(/^#\s+(.+)$/m)?.[1] || "";
+  const headingParts = heading.split(/\s+-\s+/);
+  return {
+    property_id: Number(frontmatterValue(markdown, "property_id") || 0) || null,
+    property: cleanWikiLink(frontmatterValue(markdown, "property")),
+    ref: frontmatterValue(markdown, "ref") || headingParts[0] || "",
+    title: frontmatterValue(markdown, "title") || headingParts.slice(1).join(" - ") || heading,
+    status: frontmatterValue(markdown, "status") || "Open",
+    approved: yesNo(frontmatterValue(markdown, "approved")),
+    utility_type: frontmatterValue(markdown, "utility_type") || "electricity",
+    investment_eur: numberOrNull(frontmatterValue(markdown, "investment_eur")),
+    energy_saving_kwh: numberOrNull(frontmatterValue(markdown, "energy_saving_kwh_per_year")),
+    what_why: markdownSection(markdown, "What & Why") || "Not stated.",
+    pitfall: markdownSection(markdown, "Pitfall") || "Not stated in source.",
+    action: markdownSection(markdown, "Action") || "Not stated.",
+    notes: emptyNote(markdownSection(markdown, "Notes"))
+  };
+}
+
 function escapeTable(value) {
   return String(value ?? "").replace(/\|/g, "\\|").replace(/\n/g, " ").trim();
 }
@@ -419,6 +440,17 @@ function numberOrZero(value) {
 
 function yesNo(value) {
   return /^(yes|true|done|x|1)$/i.test(String(value || "").trim());
+}
+
+function markdownSection(markdown = "", heading = "") {
+  const pattern = new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$([\\s\\S]*?)(?=^##\\s+|(?![\\s\\S]))`, "im");
+  const match = String(markdown || "").match(pattern);
+  return match ? match[1].trim() : "";
+}
+
+function emptyNote(value = "") {
+  const text = String(value || "").trim();
+  return /^_?No additional notes recorded\.?_?$/i.test(text) ? "" : text;
 }
 
 function propertyKey(value) {
@@ -490,7 +522,7 @@ function propertyFieldKey(label) {
 }
 
 function frontmatterValue(markdown, key) {
-  const match = String(markdown || "").match(new RegExp(`^${escapeRegExp(key)}:\\\\s*(.+)$`, "m"));
+  const match = String(markdown || "").match(new RegExp(`^${escapeRegExp(key)}:\\s*(.+)$`, "m"));
   if (!match) return "";
   return match[1].trim().replace(/^["']|["']$/g, "");
 }
@@ -547,6 +579,24 @@ ${saving.notes || "Not stated."}
 
 - ${new Date().toLocaleString()}: Note written by ECM Register.
 `;
+}
+
+export function parseSavingMarkdown(markdown = "") {
+  if (frontmatterValue(markdown, "record_type") !== "implemented_saving") return null;
+  return {
+    property_id: Number(frontmatterValue(markdown, "property_id") || 0) || null,
+    property: cleanWikiLink(frontmatterValue(markdown, "property")),
+    ecm_id: Number(frontmatterValue(markdown, "ecm_id") || 0) || null,
+    ecm_ref: frontmatterValue(markdown, "ecm_ref"),
+    ecm_title: frontmatterValue(markdown, "ecm_title"),
+    utility_type: frontmatterValue(markdown, "utility_type") || "electricity",
+    start_date: frontmatterValue(markdown, "period_start"),
+    end_date: frontmatterValue(markdown, "period_end"),
+    energy_saving_kwh: numberOrZero(frontmatterValue(markdown, "energy_saving_kwh")),
+    unit_cost_eur_per_kwh: numberOrZero(frontmatterValue(markdown, "unit_cost_eur_per_kwh")),
+    cost_saving_eur: numberOrZero(frontmatterValue(markdown, "cost_saving_eur")),
+    notes: emptyNote(markdownSection(markdown, "Measurement Notes"))
+  };
 }
 
 export function buildMeetingMarkdown({ property, reportMonth, performance, openEcms, preMeeting = "", postMeeting = "", meetingDate }) {

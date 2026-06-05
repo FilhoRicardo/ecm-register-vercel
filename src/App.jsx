@@ -1308,7 +1308,7 @@ export default function App() {
         </div>
       </aside>
 
-      <main className="main">
+      <main className={`main ${active === "dashboard" ? "main-dashboard" : ""}`}>
         <div className="mobile-nav">
           <select className="input" value={active} onChange={(event) => setActive(event.target.value)}>
             {NAV.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
@@ -1777,57 +1777,62 @@ function DashboardView({ data, ready, now }) {
   const openSaving = open.reduce((sum, item) => sum + Number(item.annual_saving_eur || 0), 0);
   const implementedSaving = implemented.reduce((sum, item) => sum + Number(item.annual_saving_eur || 0), 0);
   const totalEnergy = ecms.reduce((sum, item) => sum + Number(item.energy_saving_kwh || 0), 0);
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth() + 1;
-  const adminRows = currentMonthAdminRows(data.properties || [], data.adminTracker || [], currentYear, currentMonth);
+  const { year: adminYear, month: adminMonth } = previousMonthPeriod(now);
+  const adminRows = currentMonthAdminRows(data.properties || [], data.adminTracker || [], adminYear, adminMonth);
+  const kpis = [
+    ["Properties", data.properties.length],
+    ["Tenants", (data.tenants || []).length],
+    ["Equipment", (data.equipment || []).length],
+    ["ECMs", ecms.length],
+    ["Open ECMs", open.length],
+    ["Implemented", implemented.length],
+    ["Open savings", `€${money(openSaving)}/a`],
+    ["Implemented savings", `€${money(implementedSaving)}/a`],
+    ["Total energy saving", `${kwh(totalEnergy)} kWh/a`],
+    ["Monthly usage records", (data.monthlyUsage || []).length]
+  ];
   return (
-    <section className="section">
-      <h3>Dashboard</h3>
-      <div className="grid four">
-        <Kpi label="Properties" value={data.properties.length} />
-        <Kpi label="Tenants" value={(data.tenants || []).length} />
-        <Kpi label="Equipment" value={(data.equipment || []).length} />
-        <Kpi label="ECMs" value={ecms.length} />
+    <section className="section dashboard-section">
+      <div className="dashboard-header-line">
+        <h3>Dashboard</h3>
+        <span className="pill">Admin month: {MONTH_LABELS[adminMonth - 1]} {adminYear}</span>
       </div>
-      <div className="grid four" style={{ marginTop: 14 }}>
-        <Kpi label="Open ECMs" value={open.length} />
-        <Kpi label="Implemented" value={implemented.length} />
-        <Kpi label="Open savings" value={`€${money(openSaving)}/a`} />
-        <Kpi label="Implemented savings" value={`€${money(implementedSaving)}/a`} />
+      <div className="dashboard-kpi-grid">
+        {kpis.map(([label, value]) => <Kpi key={label} label={label} value={value} />)}
       </div>
-      <div className="grid two" style={{ marginTop: 14 }}>
-        <Kpi label="Total energy saving" value={`${kwh(totalEnergy)} kWh/a`} />
-        <Kpi label="Monthly usage records" value={(data.monthlyUsage || []).length} />
-      </div>
-      <div className="grid two" style={{ marginTop: 14 }}>
-        <SummaryTable title="ECM Status" rows={countRows(ecms, "status")} />
-        <SummaryTable title="Utility Impacted" rows={countRows(ecms, "utility_type")} />
-      </div>
-      <div className="card" style={{ marginTop: 14, overflow: "auto" }}>
-        <h3>Admin Tracker - {MONTH_LABELS[currentMonth - 1]} {currentYear}</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Property</th>
-              {ADMIN_DELIVERABLES.map(([, label]) => <th key={label}>{label}</th>)}
-              <th>Comments</th>
-            </tr>
-          </thead>
-          <tbody>
-            {adminRows.map(({ property, record }) => (
-              <tr key={property.id}>
-                <td><strong>{property.name}</strong></td>
-                {ADMIN_DELIVERABLES.map(([key]) => (
-                  <td key={key}>
-                    <span className={`tracker-check ${adminStatusClass(record?.[key])}`}>{adminStatusLabel(record?.[key])}</span>
-                  </td>
+      <div className="dashboard-lower-grid">
+        <div className="dashboard-summary-grid">
+          <SummaryTable title="ECM Status" rows={countRows(ecms, "status")} className="dashboard-summary-card" />
+          <SummaryTable title="Utility Impacted" rows={countRows(ecms, "utility_type")} className="dashboard-summary-card" />
+        </div>
+        <div className="card dashboard-admin-card">
+          <h3>Admin Tracker - {MONTH_LABELS[adminMonth - 1]} {adminYear}</h3>
+          <div className="dashboard-admin-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Property</th>
+                  {ADMIN_DELIVERABLES.map(([, label]) => <th key={label}>{label}</th>)}
+                  <th>Comments</th>
+                </tr>
+              </thead>
+              <tbody>
+                {adminRows.map(({ property, record }) => (
+                  <tr key={property.id}>
+                    <td><strong>{property.name}</strong></td>
+                    {ADMIN_DELIVERABLES.map(([key]) => (
+                      <td key={key}>
+                        <span className={`tracker-check ${adminStatusClass(record?.[key])}`}>{adminStatusLabel(record?.[key])}</span>
+                      </td>
+                    ))}
+                    <td>{record?.comments || ""}</td>
+                  </tr>
                 ))}
-                <td>{record?.comments || ""}</td>
-              </tr>
-            ))}
-            {!adminRows.length ? <tr><td colSpan={ADMIN_DELIVERABLES.length + 2} className="muted">No properties loaded.</td></tr> : null}
-          </tbody>
-        </table>
+                {!adminRows.length ? <tr><td colSpan={ADMIN_DELIVERABLES.length + 2} className="muted">No properties loaded.</td></tr> : null}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -3269,9 +3274,9 @@ function Kpi({ label, value }) {
   return <div className="card kpi"><div className="label">{label}</div><div className="value">{value}</div></div>;
 }
 
-function SummaryTable({ title, rows }) {
+function SummaryTable({ title, rows, className = "" }) {
   return (
-    <div className="card">
+    <div className={`card ${className}`.trim()}>
       <h3>{title}</h3>
       <table>
         <thead><tr><th>Bucket</th><th>Count</th></tr></thead>
@@ -4374,6 +4379,14 @@ function currentMonthAdminRows(properties, records, year, month) {
         && Number(record.admin_month) === Number(month)
       )) || null
     }));
+}
+
+function previousMonthPeriod(value) {
+  const date = new Date(value.getFullYear(), value.getMonth() - 1, 1);
+  return {
+    year: date.getFullYear(),
+    month: date.getMonth() + 1
+  };
 }
 
 function formatDashboardDateTime(value) {

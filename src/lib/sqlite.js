@@ -334,13 +334,13 @@ export function getAdminTracker(db, propertyId = null) {
     propertyId ? [propertyId] : []
   ).map((row) => ({
     ...row,
-    docunite_report: Boolean(row.docunite_report),
-    ecm_report: Boolean(row.ecm_report),
-    pre_meeting_notes: Boolean(row.pre_meeting_notes),
-    consumption_tracked: Boolean(row.consumption_tracked),
-    meeting_held: Boolean(row.meeting_held),
-    post_meeting_notes: Boolean(row.post_meeting_notes),
-    status_quo: Boolean(row.status_quo)
+    docunite_report: trackerStatus(row.docunite_report),
+    ecm_report: trackerStatus(row.ecm_report),
+    pre_meeting_notes: trackerStatus(row.pre_meeting_notes),
+    consumption_tracked: trackerStatus(row.consumption_tracked),
+    meeting_held: trackerStatus(row.meeting_held),
+    post_meeting_notes: trackerStatus(row.post_meeting_notes),
+    status_quo: trackerStatus(row.status_quo)
   }));
 }
 
@@ -354,13 +354,13 @@ export function upsertAdminTracker(db, input) {
     input.property_id,
     Number(input.admin_year),
     Number(input.admin_month),
-    input.docunite_report ? 1 : 0,
-    input.ecm_report ? 1 : 0,
-    input.pre_meeting_notes ? 1 : 0,
-    input.consumption_tracked ? 1 : 0,
-    input.meeting_held ? 1 : 0,
-    input.post_meeting_notes ? 1 : 0,
-    input.status_quo ? 1 : 0,
+    trackerDbValue(input.docunite_report),
+    trackerDbValue(input.ecm_report),
+    trackerDbValue(input.pre_meeting_notes),
+    trackerDbValue(input.consumption_tracked),
+    trackerDbValue(input.meeting_held),
+    trackerDbValue(input.post_meeting_notes),
+    trackerDbValue(input.status_quo),
     input.comments || ""
   ];
   if (existing) {
@@ -391,6 +391,18 @@ export function deleteAdminTracker(db, id) {
 
 export function deleteAdminTrackerForProperty(db, propertyId) {
   db.run("DELETE FROM monthly_admin_tracker WHERE property_id = ?", [propertyId]);
+}
+
+function trackerStatus(value) {
+  const n = Number(value || 0);
+  if (n < 0) return "na";
+  return n > 0 ? "done" : "open";
+}
+
+function trackerDbValue(value) {
+  if (value === "na") return -1;
+  if (value === "done" || value === true) return 1;
+  return 0;
 }
 
 export function tableCount(db, table) {

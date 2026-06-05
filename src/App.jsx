@@ -109,6 +109,12 @@ const ADMIN_DELIVERABLES = [
   ["status_quo", "Status Quo"]
 ];
 
+const ADMIN_STATUS_OPTIONS = [
+  ["open", "Open"],
+  ["done", "Done"],
+  ["na", "N/A"]
+];
+
 const EMPTY_ECM = {
   property_id: "",
   ref: "",
@@ -188,6 +194,7 @@ export default function App() {
   const [toast, setToast] = useState("");
   const [setupError, setSetupError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
     boot();
@@ -198,6 +205,11 @@ export default function App() {
     const timer = setTimeout(() => setToast(""), 4200);
     return () => clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!data?.properties?.length) return;
@@ -368,8 +380,8 @@ export default function App() {
       let propertySyncMessage = "";
       if (allHandles.propertyNotes && statuses.propertyNotes === "granted") {
         try {
-          const synced = await syncPropertyNotesFolder(nextDb, allHandles.propertyNotes, { requestPermission: false });
-          propertySyncMessage = ` Synced ${synced.count} property files.`;
+          await importPropertyMarkdownTables(nextDb, allHandles.propertyNotes, { requestPermission: false });
+          propertySyncMessage = ` Read ${getProperties(nextDb).length} property files.`;
         } catch (syncError) {
           propertySyncMessage = ` Property note sync skipped: ${syncError.message || String(syncError)}`;
         }
@@ -377,9 +389,8 @@ export default function App() {
       let tenantSyncMessage = "";
       if (allHandles.tenantNotes && statuses.tenantNotes === "granted") {
         try {
-          await importTenantMarkdownFiles(nextDb, allHandles.tenantNotes, { requestPermission: false });
-          const synced = await writeTenantMarkdownFiles(nextDb, allHandles.tenantNotes, { requestPermission: false });
-          tenantSyncMessage = ` Read Obsidian tenants and normalized ${synced.count} tenant files.`;
+          const imported = await importTenantMarkdownFiles(nextDb, allHandles.tenantNotes, { requestPermission: false });
+          tenantSyncMessage = ` Read ${imported.count} tenant rows.`;
         } catch (syncError) {
           tenantSyncMessage = ` Tenant import skipped: ${syncError.message || String(syncError)}`;
         }
@@ -387,9 +398,8 @@ export default function App() {
       let equipmentSyncMessage = "";
       if (allHandles.equipmentNotes && statuses.equipmentNotes === "granted") {
         try {
-          await importEquipmentMarkdownFiles(nextDb, allHandles.equipmentNotes, { requestPermission: false });
-          const synced = await writeEquipmentMarkdownFiles(nextDb, allHandles.equipmentNotes, { requestPermission: false });
-          equipmentSyncMessage = ` Read Obsidian equipment and normalized ${synced.count} equipment files.`;
+          const imported = await importEquipmentMarkdownFiles(nextDb, allHandles.equipmentNotes, { requestPermission: false });
+          equipmentSyncMessage = ` Read ${imported.count} equipment rows.`;
         } catch (syncError) {
           equipmentSyncMessage = ` Equipment import skipped: ${syncError.message || String(syncError)}`;
         }
@@ -398,8 +408,7 @@ export default function App() {
       if (allHandles.ecmNotes && statuses.ecmNotes === "granted") {
         try {
           const imported = await importEcmMarkdownFiles(nextDb, allHandles.ecmNotes, { requestPermission: false });
-          const synced = await writeAllEcmMarkdownFiles(nextDb, allHandles.ecmNotes, { requestPermission: false });
-          ecmSyncMessage = ` Read ${imported.count} ECM notes and normalized ${synced.count} ECM Markdown notes.`;
+          ecmSyncMessage = ` Read ${imported.count} ECM notes.`;
         } catch (syncError) {
           ecmSyncMessage = ` ECM Markdown sync skipped: ${syncError.message || String(syncError)}`;
         }
@@ -408,8 +417,7 @@ export default function App() {
       if (allHandles.savingNotes && statuses.savingNotes === "granted") {
         try {
           const imported = await importSavingMarkdownFiles(nextDb, allHandles.savingNotes, { requestPermission: false });
-          const synced = await writeSavingMarkdownFiles(nextDb, allHandles.savingNotes, { requestPermission: false });
-          savingSyncMessage = ` Read ${imported.count} implemented-saving notes and normalized ${synced.count} saving notes.`;
+          savingSyncMessage = ` Read ${imported.count} implemented-saving notes.`;
         } catch (syncError) {
           savingSyncMessage = ` Implemented-savings sync skipped: ${syncError.message || String(syncError)}`;
         }
@@ -417,9 +425,8 @@ export default function App() {
       let usageSyncMessage = "";
       if (allHandles.monthlyUsage && statuses.monthlyUsage === "granted") {
         try {
-          await importMonthlyUsageMarkdownFiles(nextDb, allHandles.monthlyUsage, { requestPermission: false });
-          const synced = await writeMonthlyUsageMarkdownFiles(nextDb, allHandles.monthlyUsage, { requestPermission: false });
-          usageSyncMessage = ` Read Obsidian usage and normalized ${synced.count} monthly usage files.`;
+          const imported = await importMonthlyUsageMarkdownFiles(nextDb, allHandles.monthlyUsage, { requestPermission: false });
+          usageSyncMessage = ` Read ${imported.count} monthly usage rows.`;
         } catch (syncError) {
           usageSyncMessage = ` Monthly usage import skipped: ${syncError.message || String(syncError)}`;
         }
@@ -427,9 +434,8 @@ export default function App() {
       let adminTrackerSyncMessage = "";
       if (allHandles.adminTracker && statuses.adminTracker === "granted") {
         try {
-          await importAdminTrackerMarkdownFiles(nextDb, allHandles.adminTracker, { requestPermission: false });
-          const synced = await writeAdminTrackerMarkdownFiles(nextDb, allHandles.adminTracker, { requestPermission: false });
-          adminTrackerSyncMessage = ` Read Obsidian admin tracker and normalized ${synced.count} admin tracker files.`;
+          const imported = await importAdminTrackerMarkdownFiles(nextDb, allHandles.adminTracker, { requestPermission: false });
+          adminTrackerSyncMessage = ` Read ${imported.count} admin tracker rows.`;
         } catch (syncError) {
           adminTrackerSyncMessage = ` Admin tracker import skipped: ${syncError.message || String(syncError)}`;
         }
@@ -1314,7 +1320,10 @@ export default function App() {
             <h2>Local ECM Register</h2>
             <p>Manage properties, ECMs, usage, reports, Obsidian notes, and calculation evidence while keeping every working file local to your machine.</p>
           </div>
-          <span className="pill">{ready ? "Synced local workspace" : "Setup required"}</span>
+          <div className="hero-status">
+            {active === "dashboard" ? <span className="pill">{formatDashboardDateTime(now)}</span> : null}
+            <span className="pill">{ready ? "Synced local workspace" : "Setup required"}</span>
+          </div>
         </div>
 
         {active === "welcome" && <WelcomeView ready={ready} />}
@@ -1333,7 +1342,7 @@ export default function App() {
             ready={ready}
           />
         )}
-        {active === "dashboard" && <DashboardView data={data} ready={ready} />}
+        {active === "dashboard" && <DashboardView data={data} ready={ready} now={now} />}
         {active === "properties" && (
           <PropertiesView
             ready={ready}
@@ -1542,7 +1551,7 @@ function WelcomeView({ ready }) {
     ["Admin tracker", "Admin Tracker folder + in-memory cache", "Monthly deliverable status lives in one Markdown table per building and is cached in memory."],
     ["Calculation evidence", "Calculation Files folder", "Uploaded calculation files are renamed and routed locally for traceability."],
     ["Reports", "Browser download", "Excel registers, usage CSV/Excel, ECM review workbooks, PPTX reports, and CRREM PDFs are exported locally."],
-    ["Obsidian sync", "Obsidian folders + in-memory cache", "Refresh rebuilds the working cache from Markdown and normalizes generated notes."]
+    ["Obsidian sync", "Obsidian folders + in-memory cache", "Refresh rebuilds the working cache from Markdown."]
   ];
   return (
     <section className="section">
@@ -1760,7 +1769,7 @@ function folderStatusLabel(handle, status) {
   return "Remembered";
 }
 
-function DashboardView({ data, ready }) {
+function DashboardView({ data, ready, now }) {
   if (!ready) return <EmptyState />;
   const ecms = data.ecms || [];
   const open = ecms.filter((item) => item.status === "Open");
@@ -1768,6 +1777,9 @@ function DashboardView({ data, ready }) {
   const openSaving = open.reduce((sum, item) => sum + Number(item.annual_saving_eur || 0), 0);
   const implementedSaving = implemented.reduce((sum, item) => sum + Number(item.annual_saving_eur || 0), 0);
   const totalEnergy = ecms.reduce((sum, item) => sum + Number(item.energy_saving_kwh || 0), 0);
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1;
+  const adminRows = currentMonthAdminRows(data.properties || [], data.adminTracker || [], currentYear, currentMonth);
   return (
     <section className="section">
       <h3>Dashboard</h3>
@@ -1790,6 +1802,32 @@ function DashboardView({ data, ready }) {
       <div className="grid two" style={{ marginTop: 14 }}>
         <SummaryTable title="ECM Status" rows={countRows(ecms, "status")} />
         <SummaryTable title="Utility Impacted" rows={countRows(ecms, "utility_type")} />
+      </div>
+      <div className="card" style={{ marginTop: 14, overflow: "auto" }}>
+        <h3>Admin Tracker - {MONTH_LABELS[currentMonth - 1]} {currentYear}</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Property</th>
+              {ADMIN_DELIVERABLES.map(([, label]) => <th key={label}>{label}</th>)}
+              <th>Comments</th>
+            </tr>
+          </thead>
+          <tbody>
+            {adminRows.map(({ property, record }) => (
+              <tr key={property.id}>
+                <td><strong>{property.name}</strong></td>
+                {ADMIN_DELIVERABLES.map(([key]) => (
+                  <td key={key}>
+                    <span className={`tracker-check ${adminStatusClass(record?.[key])}`}>{adminStatusLabel(record?.[key])}</span>
+                  </td>
+                ))}
+                <td>{record?.comments || ""}</td>
+              </tr>
+            ))}
+            {!adminRows.length ? <tr><td colSpan={ADMIN_DELIVERABLES.length + 2} className="muted">No properties loaded.</td></tr> : null}
+          </tbody>
+        </table>
       </div>
     </section>
   );
@@ -3078,7 +3116,7 @@ function AdminTrackerView({ ready, properties, records, form, setForm, save, rem
     });
   };
   async function toggleDeliverable(record, key) {
-    await save(null, { ...record, [key]: !record[key] });
+    await save(null, { ...record, [key]: nextAdminStatus(record[key]) });
   }
   return (
     <section className="section">
@@ -3110,8 +3148,10 @@ function AdminTrackerView({ ready, properties, records, form, setForm, save, rem
             <div className="admin-deliverable-list">
               {ADMIN_DELIVERABLES.map(([key, label]) => (
                 <label key={key}>
-                  <input type="checkbox" checked={Boolean(form[key])} onChange={(event) => set(key, event.target.checked)} />
                   <span>{label}</span>
+                  <select value={normaliseAdminStatus(form[key])} onChange={(event) => set(key, event.target.value)}>
+                    {ADMIN_STATUS_OPTIONS.map(([value, statusLabel]) => <option key={value} value={value}>{statusLabel}</option>)}
+                  </select>
                 </label>
               ))}
             </div>
@@ -3139,8 +3179,8 @@ function AdminTrackerView({ ready, properties, records, form, setForm, save, rem
                     <td><strong>{MONTH_LABELS[Number(record.admin_month || 1) - 1]} {record.admin_year}</strong></td>
                     {ADMIN_DELIVERABLES.map(([key]) => (
                       <td key={key} onClick={(event) => event.stopPropagation()}>
-                        <button className={`tracker-check ${record[key] ? "is-done" : ""}`} type="button" onClick={() => toggleDeliverable(record, key)}>
-                          {record[key] ? "Done" : "Open"}
+                        <button className={`tracker-check ${adminStatusClass(record[key])}`} type="button" onClick={() => toggleDeliverable(record, key)}>
+                          {adminStatusLabel(record[key])}
                         </button>
                       </td>
                     ))}
@@ -3213,7 +3253,7 @@ function DatabaseAdminView({
           <button className="btn primary" disabled={busy} onClick={syncObsidianNotes}>{busy ? "Syncing..." : "Refresh Cache From Obsidian"}</button>
           <button className="btn" disabled={busy} onClick={syncEcmMarkdownNotes}>Sync ECM Markdown Files</button>
         </div>
-        <p className="muted">Refresh reads configured Obsidian notes, rebuilds the in-memory cache, then normalizes generated Markdown. Use the ECM-only sync when you only need the ECM folder updated.</p>
+        <p className="muted">Refresh reads configured Obsidian notes and rebuilds the in-memory cache. Use the ECM-only sync when you need the ECM folder normalized.</p>
       </div>
       <div className="card" style={{ overflow: "auto", marginTop: 14 }}>
         <table>
@@ -4253,6 +4293,27 @@ function carrierLabel(options, value) {
   return options.find((item) => item.value === value)?.label || value || "not set";
 }
 
+function normaliseAdminStatus(value) {
+  if (value === "na") return "na";
+  if (value === "done" || value === true) return "done";
+  return "open";
+}
+
+function nextAdminStatus(value) {
+  const current = normaliseAdminStatus(value);
+  if (current === "open") return "done";
+  if (current === "done") return "na";
+  return "open";
+}
+
+function adminStatusLabel(value) {
+  return ADMIN_STATUS_OPTIONS.find(([status]) => status === normaliseAdminStatus(value))?.[1] || "Open";
+}
+
+function adminStatusClass(value) {
+  return `is-${normaliseAdminStatus(value)}`;
+}
+
 function EmptyState() {
   return <section className="section"><div className="card"><h3>Setup Required</h3><p className="muted">Configure the required Obsidian folders and resume the workspace first.</p></div></section>;
 }
@@ -4267,13 +4328,13 @@ function defaultAdminTrackerForm() {
     property_id: "",
     admin_year: String(new Date().getFullYear()),
     admin_month: String(new Date().getMonth() + 1),
-    docunite_report: false,
-    ecm_report: false,
-    pre_meeting_notes: false,
-    consumption_tracked: false,
-    meeting_held: false,
-    post_meeting_notes: false,
-    status_quo: false,
+    docunite_report: "open",
+    ecm_report: "open",
+    pre_meeting_notes: "open",
+    consumption_tracked: "open",
+    meeting_held: "open",
+    post_meeting_notes: "open",
+    status_quo: "open",
     comments: ""
   };
 }
@@ -4300,6 +4361,29 @@ function countRows(rows, key) {
   return [...counts.entries()]
     .map(([label, count]) => ({ label, count }))
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+
+function currentMonthAdminRows(properties, records, year, month) {
+  return [...(properties || [])]
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")))
+    .map((property) => ({
+      property,
+      record: (records || []).find((record) => (
+        Number(record.property_id) === Number(property.id)
+        && Number(record.admin_year) === Number(year)
+        && Number(record.admin_month) === Number(month)
+      )) || null
+    }));
+}
+
+function formatDashboardDateTime(value) {
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "long",
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(value);
 }
 
 function rollingPerformance(rows, propertyId, reportMonth) {

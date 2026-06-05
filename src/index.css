@@ -121,6 +121,12 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
   letter-spacing: 0;
 }
 .hero p { margin: 7px 0 0; color: #94a3b8; line-height: 1.5; max-width: 980px; font-size: 13px; }
+.hero-status {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
 .section { max-width: none; }
 .section h3 { margin: 0 0 12px; font-size: 21px; color: #f1f5f9; letter-spacing: 0; }
 .section-head {
@@ -680,6 +686,7 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
 .admin-deliverable-list label {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
   border: 1px solid rgba(255,255,255,0.07);
   border-radius: 8px;
@@ -687,6 +694,9 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
   color: #dbeafe;
   background: rgba(255,255,255,0.025);
   font-weight: 800;
+}
+.admin-deliverable-list select {
+  max-width: 120px;
 }
 .admin-tracker-table-card {
   min-height: 420px;
@@ -699,11 +709,22 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
   padding: 4px 8px;
   font-size: 10px;
   font-weight: 900;
+  display: inline-flex;
+}
+.tracker-check.is-open {
+  border-color: rgba(239,68,68,0.24);
+  color: #fecaca;
+  background: rgba(239,68,68,0.08);
 }
 .tracker-check.is-done {
   border-color: rgba(34,197,94,0.32);
   color: #bbf7d0;
   background: rgba(34,197,94,0.12);
+}
+.tracker-check.is-na {
+  border-color: rgba(148,163,184,0.32);
+  color: #cbd5e1;
+  background: rgba(148,163,184,0.12);
 }
 .field { display: grid; gap: 5px; margin-bottom: 11px; }
 .field label { font-size: 10px; text-transform: uppercase; font-weight: 900; color: #64748b; letter-spacing: 0.08em; }

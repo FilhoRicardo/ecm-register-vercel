@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   databaseHealth,
+  deleteAdminTracker,
   deleteAdminTrackerForProperty,
   deleteEcm,
   deleteEquipment,
@@ -101,9 +102,11 @@ const RESPONSIBLE_OPTIONS = [
 const ADMIN_DELIVERABLES = [
   ["docunite_report", "Docunite report"],
   ["ecm_report", "ECM report"],
-  ["status_quo", "Status Quo"],
-  ["pre_meeting_notes", "Pre Meeting notes"],
-  ["post_meeting_notes", "Post meeting notes"]
+  ["pre_meeting_notes", "Pre meeting notes"],
+  ["consumption_tracked", "Consumption tracked"],
+  ["meeting_held", "Meeting held"],
+  ["post_meeting_notes", "Post meeting notes"],
+  ["status_quo", "Status Quo"]
 ];
 
 const EMPTY_ECM = {
@@ -551,6 +554,15 @@ export default function App() {
     setAdminForm((prev) => ({ ...prev, ...next }));
     await persist("Admin tracker saved.");
     await syncAdminTrackerMarkdown(Number(next.property_id));
+  }
+
+  async function removeAdminTracker(id) {
+    const existing = (data?.adminTracker || []).find((row) => row.id === Number(id));
+    if (!existing || !window.confirm("Delete this admin tracker row?")) return;
+    deleteAdminTracker(db, existing.id);
+    setAdminForm({ ...defaultAdminTrackerForm(), property_id: String(existing.property_id || selectedPropertyId || "") });
+    await persist("Admin tracker row deleted.");
+    await syncAdminTrackerMarkdown(existing.property_id);
   }
 
   async function syncObsidianNotes() {
@@ -1490,6 +1502,7 @@ export default function App() {
             form={adminForm}
             setForm={setAdminForm}
             save={saveAdminTracker}
+            remove={removeAdminTracker}
           />
         )}
         {active === "database" && <DatabaseView ready={ready} db={db} sqlText={sqlText} setSqlText={setSqlText} runSql={runSql} sqlRows={sqlRows} />}
@@ -3045,7 +3058,7 @@ function OpenActionsView({ ready, properties, selectedPropertyId, setSelectedPro
   );
 }
 
-function AdminTrackerView({ ready, properties, records, form, setForm, save }) {
+function AdminTrackerView({ ready, properties, records, form, setForm, save, remove }) {
   if (!ready) return <EmptyState />;
   const selectedPropertyId = Number(form.property_id || properties[0]?.id || "");
   const propertyRecords = (records || []).filter((record) => record.property_id === selectedPropertyId);
@@ -3117,6 +3130,7 @@ function AdminTrackerView({ ready, properties, records, form, setForm, save }) {
                   <th>Period</th>
                   {ADMIN_DELIVERABLES.map(([, label]) => <th key={label}>{label}</th>)}
                   <th>Comments</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -3131,9 +3145,12 @@ function AdminTrackerView({ ready, properties, records, form, setForm, save }) {
                       </td>
                     ))}
                     <td>{record.comments || ""}</td>
+                    <td onClick={(event) => event.stopPropagation()}>
+                      <button className="btn danger" type="button" onClick={() => remove(record.id)}>Delete</button>
+                    </td>
                   </tr>
                 ))}
-                {!sortedRecords.length ? <tr><td colSpan={ADMIN_DELIVERABLES.length + 2} className="muted">No monthly admin tracker rows for this property yet.</td></tr> : null}
+                {!sortedRecords.length ? <tr><td colSpan={ADMIN_DELIVERABLES.length + 3} className="muted">No monthly admin tracker rows for this property yet.</td></tr> : null}
               </tbody>
             </table>
           </div>
@@ -4252,9 +4269,11 @@ function defaultAdminTrackerForm() {
     admin_month: String(new Date().getMonth() + 1),
     docunite_report: false,
     ecm_report: false,
-    status_quo: false,
     pre_meeting_notes: false,
+    consumption_tracked: false,
+    meeting_held: false,
     post_meeting_notes: false,
+    status_quo: false,
     comments: ""
   };
 }

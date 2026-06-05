@@ -197,8 +197,8 @@ export function buildAdminTrackerMarkdown(property, records = []) {
     return Number(a.admin_month || 0) - Number(b.admin_month || 0);
   });
   const tableRows = rows.length
-    ? rows.map((row) => `| ${adminPeriod(row)} | ${checkbox(row.docunite_report)} | ${checkbox(row.ecm_report)} | ${checkbox(row.status_quo)} | ${checkbox(row.pre_meeting_notes)} | ${checkbox(row.post_meeting_notes)} | ${escapeTable(row.comments)} |`).join("\n")
-    : "| _No admin tracker records yet_ |  |  |  |  |  |  |";
+    ? rows.map((row) => `| ${adminPeriod(row)} | ${checkbox(row.docunite_report)} | ${checkbox(row.ecm_report)} | ${checkbox(row.pre_meeting_notes)} | ${checkbox(row.consumption_tracked)} | ${checkbox(row.meeting_held)} | ${checkbox(row.post_meeting_notes)} | ${checkbox(row.status_quo)} | ${escapeTable(row.comments)} |`).join("\n")
+    : "| _No admin tracker records yet_ |  |  |  |  |  |  |  |  |";
 
   return `---
 record_type: admin_tracker
@@ -213,8 +213,8 @@ tags:
 
 # ${property?.name || "Property"} - Admin Tracker
 
-| Month | Docunite report | ECM report | Status Quo | Pre Meeting notes | Post meeting notes | Comments |
-|---|---:|---:|---:|---:|---:|---|
+| Month | Docunite report | ECM report | Pre meeting notes | Consumption tracked | Meeting held | Post meeting notes | Status Quo | Comments |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
 ${tableRows}
 `;
 }
@@ -230,9 +230,11 @@ export function parseAdminTrackerMarkdown(markdown = "") {
         admin_month: Number(month || 0) || "",
         docunite_report: yesNo(row["Docunite report"]),
         ecm_report: yesNo(row["ECM report"]),
-        status_quo: yesNo(row["Status Quo"]),
-        pre_meeting_notes: yesNo(row["Pre Meeting notes"]),
+        pre_meeting_notes: yesNo(row["Pre meeting notes"] || row["Pre Meeting notes"]),
+        consumption_tracked: yesNo(row["Consumption tracked"]),
+        meeting_held: yesNo(row["Meeting held"]),
         post_meeting_notes: yesNo(row["Post meeting notes"]),
+        status_quo: yesNo(row["Status Quo"]),
         comments: row.Comments || ""
       };
     }).filter((row) => row.admin_year && row.admin_month)

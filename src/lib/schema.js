@@ -141,9 +141,11 @@ CREATE TABLE IF NOT EXISTS monthly_admin_tracker (
   admin_month INTEGER NOT NULL DEFAULT 1,
   docunite_report INTEGER NOT NULL DEFAULT 0,
   ecm_report INTEGER NOT NULL DEFAULT 0,
-  status_quo INTEGER NOT NULL DEFAULT 0,
   pre_meeting_notes INTEGER NOT NULL DEFAULT 0,
+  consumption_tracked INTEGER NOT NULL DEFAULT 0,
+  meeting_held INTEGER NOT NULL DEFAULT 0,
   post_meeting_notes INTEGER NOT NULL DEFAULT 0,
+  status_quo INTEGER NOT NULL DEFAULT 0,
   comments TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -163,6 +165,8 @@ const MIGRATIONS = [
   "ALTER TABLE properties ADD COLUMN renewable_exported_kwh REAL NOT NULL DEFAULT 0",
   "ALTER TABLE properties ADD COLUMN heating_emission_factor_kgco2e_per_kwh REAL",
   "ALTER TABLE properties ADD COLUMN cooling_emission_factor_kgco2e_per_kwh REAL",
+  "ALTER TABLE monthly_admin_tracker ADD COLUMN consumption_tracked INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE monthly_admin_tracker ADD COLUMN meeting_held INTEGER NOT NULL DEFAULT 0",
   "UPDATE properties SET crrem_property_type = 'Office' WHERE crrem_property_type = '' OR crrem_property_type IS NULL",
   "UPDATE properties SET heating_carrier = 'natural_gas' WHERE heating_carrier = '' OR heating_carrier IS NULL",
   "UPDATE properties SET cooling_carrier = 'electric' WHERE cooling_carrier = '' OR cooling_carrier IS NULL",
@@ -209,9 +213,11 @@ function migrateMonthlyAdminTracker(db) {
         admin_month INTEGER NOT NULL DEFAULT 1,
         docunite_report INTEGER NOT NULL DEFAULT 0,
         ecm_report INTEGER NOT NULL DEFAULT 0,
-        status_quo INTEGER NOT NULL DEFAULT 0,
         pre_meeting_notes INTEGER NOT NULL DEFAULT 0,
+        consumption_tracked INTEGER NOT NULL DEFAULT 0,
+        meeting_held INTEGER NOT NULL DEFAULT 0,
         post_meeting_notes INTEGER NOT NULL DEFAULT 0,
+        status_quo INTEGER NOT NULL DEFAULT 0,
         comments TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -223,10 +229,10 @@ function migrateMonthlyAdminTracker(db) {
     db.run(`
       INSERT OR IGNORE INTO monthly_admin_tracker_new (
         id, property_id, admin_year, admin_month, docunite_report, ecm_report,
-        status_quo, pre_meeting_notes, post_meeting_notes, comments, created_at, updated_at
+        pre_meeting_notes, consumption_tracked, meeting_held, post_meeting_notes, status_quo, comments, created_at, updated_at
       )
       SELECT id, property_id, admin_year, ${monthExpr}, docunite_report, ecm_report,
-        status_quo, pre_meeting_notes, post_meeting_notes, comments, created_at, updated_at
+        pre_meeting_notes, ${columns.includes("consumption_tracked") ? "consumption_tracked" : "0"}, ${columns.includes("meeting_held") ? "meeting_held" : "0"}, post_meeting_notes, status_quo, comments, created_at, updated_at
       FROM monthly_admin_tracker
     `);
     db.run("DROP TABLE monthly_admin_tracker");

@@ -336,9 +336,11 @@ export function getAdminTracker(db, propertyId = null) {
     ...row,
     docunite_report: Boolean(row.docunite_report),
     ecm_report: Boolean(row.ecm_report),
-    status_quo: Boolean(row.status_quo),
     pre_meeting_notes: Boolean(row.pre_meeting_notes),
-    post_meeting_notes: Boolean(row.post_meeting_notes)
+    consumption_tracked: Boolean(row.consumption_tracked),
+    meeting_held: Boolean(row.meeting_held),
+    post_meeting_notes: Boolean(row.post_meeting_notes),
+    status_quo: Boolean(row.status_quo)
   }));
 }
 
@@ -354,16 +356,19 @@ export function upsertAdminTracker(db, input) {
     Number(input.admin_month),
     input.docunite_report ? 1 : 0,
     input.ecm_report ? 1 : 0,
-    input.status_quo ? 1 : 0,
     input.pre_meeting_notes ? 1 : 0,
+    input.consumption_tracked ? 1 : 0,
+    input.meeting_held ? 1 : 0,
     input.post_meeting_notes ? 1 : 0,
+    input.status_quo ? 1 : 0,
     input.comments || ""
   ];
   if (existing) {
     db.run(
       `UPDATE monthly_admin_tracker
-       SET property_id=?, admin_year=?, admin_month=?, docunite_report=?, ecm_report=?, status_quo=?,
-           pre_meeting_notes=?, post_meeting_notes=?, comments=?, updated_at=CURRENT_TIMESTAMP
+       SET property_id=?, admin_year=?, admin_month=?, docunite_report=?, ecm_report=?,
+           pre_meeting_notes=?, consumption_tracked=?, meeting_held=?, post_meeting_notes=?, status_quo=?,
+           comments=?, updated_at=CURRENT_TIMESTAMP
        WHERE id=?`,
       [...params, existing.id]
     );
@@ -371,12 +376,17 @@ export function upsertAdminTracker(db, input) {
   }
   db.run(
     `INSERT INTO monthly_admin_tracker (
-      property_id, admin_year, admin_month, docunite_report, ecm_report, status_quo,
-      pre_meeting_notes, post_meeting_notes, comments, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      property_id, admin_year, admin_month, docunite_report, ecm_report,
+      pre_meeting_notes, consumption_tracked, meeting_held, post_meeting_notes, status_quo,
+      comments, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     params
   );
   return Number(one(db, "SELECT last_insert_rowid() AS id").id);
+}
+
+export function deleteAdminTracker(db, id) {
+  db.run("DELETE FROM monthly_admin_tracker WHERE id = ?", [id]);
 }
 
 export function deleteAdminTrackerForProperty(db, propertyId) {

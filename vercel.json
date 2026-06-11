@@ -1,6 +1,6 @@
 {
   "framework": "vite",
-  "buildCommand": "npm run build",
+  "buildCommand": "npm run test:crrem && npm run build",
   "outputDirectory": "dist",
   "installCommand": "npm install",
   "rewrites": [

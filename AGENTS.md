@@ -3,11 +3,22 @@
 ## Core Principles
 
 - Work from the Linear issue or explicit user request.
+- Use Linear project `ECM Register Vercel` as the project-management source of truth for this application.
+- Linear project URL: https://linear.app/rf-ai-workspace/project/ecm-register-vercel-b846bf95da0f
 - Prefer simple, surgical changes over broad refactors.
 - Touch only the files required to satisfy the stated acceptance criteria.
 - Preserve existing behavior unless the issue explicitly changes it.
 - Match the existing code style, architecture, naming, and UI conventions.
 - Surface uncertainty early. Do not guess silently when requirements are ambiguous.
+
+## App Design System
+
+- Use Aster as the default visual system for this app unless the Linear issue or user explicitly provides a different brand.
+- Before branding or UI work, read `/Users/ricardofilho/Documents/Projects/resources/branding/aster/BRAND.md`.
+- Use `/Users/ricardofilho/Documents/Projects/resources/branding/aster/aster-tokens.css` as the source for colors, typography, glass surfaces, buttons, badges, inputs, selected states, and motion.
+- For the planned branding update, copy or import the Aster tokens into the app style layer, likely `src/index.css`, and then refit existing UI components in `src/App.jsx` to those tokens.
+- Keep the ECM Register workflow intact. Do not redesign navigation, calculations, imports, exports, or CRREM behavior unless the issue explicitly asks for that.
+- Do not invent a new palette, font pairing, shadow stack, glass recipe, or decorative gradient. If you need to deviate from Aster, state the reason before editing.
 
 ## Default Workflow
 
@@ -109,3 +120,16 @@ Return review feedback in three groups:
 - Keep diffs small and easy to review.
 - Do not hide confusion or uncertainty.
 - Do not continue past unclear requirements when the wrong choice could create rework.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+When the user types `/graphify`, invoke the `skill` tool with `skill: "graphify"` before doing anything else.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- Dirty graphify-out/ files are expected after hooks or incremental updates; dirty graph files are not a reason to skip graphify. Only skip graphify if the task is about stale or incorrect graph output, or the user explicitly says not to use it.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

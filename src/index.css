@@ -1771,3 +1771,59 @@ tr:hover td {
   border-radius: var(--aster-r-row);
   box-shadow: var(--aster-glass-hi), 0 16px 42px rgba(20,40,30,0.14);
 }
+
+/* Readability pass: raise the type floor. Tables and labels rendered at
+   9-11px (52 of ~91 text nodes on Dashboard); minimum is now 11px. */
+main table th,
+main table td {
+  font-size: 13px;
+}
+.kpi .label,
+.field label,
+.chart-head .label,
+.dashboard-section .label {
+  font-size: 11px;
+}
+.pill,
+.tracker-check {
+  font-size: 11px;
+}
+
+/* Density pass: the app-title hero repeats on every tab and consumed 107px
+   (13% of an 800px viewport) while outranking the actual page title.
+   Compact it and let the section heading lead. */
+.hero {
+  padding: 10px 18px;
+  margin-bottom: 14px;
+}
+.hero h2 {
+  font-size: 17px;
+}
+.hero p {
+  font-size: 12px;
+  margin-top: 4px;
+}
+.section-head h3 {
+  font-size: 20px;
+}
+
+/* Contrast fix: .sample-banner used dark-theme tokens (light amber text on a
+   translucent dark fill) which washes out on the light theme. */
+.sample-banner {
+  color: #7c2d12;
+  background: rgba(217, 119, 6, 0.10);
+  border-color: rgba(180, 83, 9, 0.35);
+}
+.sample-banner span {
+  color: #92400e;
+}
+
+/* Specificity follow-up to the density pass: .main-dashboard .hero outranked
+   the compact rules above. */
+.main-dashboard .hero h2 {
+  font-size: 17px;
+}
+.main-dashboard .hero {
+  padding: 8px 14px;
+  margin-bottom: 10px;
+}

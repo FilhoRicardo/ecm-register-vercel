@@ -1771,3 +1771,20 @@ tr:hover td {
   border-radius: var(--aster-r-row);
   box-shadow: var(--aster-glass-hi), 0 16px 42px rgba(20,40,30,0.14);
 }
+
+/* Readability pass: raise the type floor. Tables and labels rendered at
+   9-11px (52 of ~91 text nodes on Dashboard); minimum is now 11px. */
+main table th,
+main table td {
+  font-size: 13px;
+}
+.kpi .label,
+.field label,
+.chart-head .label,
+.dashboard-section .label {
+  font-size: 11px;
+}
+.pill,
+.tracker-check {
+  font-size: 11px;
+}

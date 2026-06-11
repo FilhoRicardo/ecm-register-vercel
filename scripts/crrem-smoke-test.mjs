@@ -1,8 +1,26 @@
 import { buildCrremAnalysis } from "../src/lib/crrem.js";
+import {
+  CRREM_COUNTRIES as DATA_COUNTRIES,
+  CRREM_PROPERTY_TYPES as DATA_PROPERTY_TYPES
+} from "../src/data/crremV205.js";
+import {
+  CRREM_COUNTRIES as METADATA_COUNTRIES,
+  CRREM_PROPERTY_TYPES as METADATA_PROPERTY_TYPES
+} from "../src/lib/crremMetadata.js";
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
+
+function assertSameList(name, expected, actual) {
+  assert(
+    expected.join("|") === actual.join("|"),
+    `${name} metadata does not match src/data/crremV205.js`
+  );
+}
+
+assertSameList("CRREM_COUNTRIES", DATA_COUNTRIES, METADATA_COUNTRIES);
+assertSameList("CRREM_PROPERTY_TYPES", DATA_PROPERTY_TYPES, METADATA_PROPERTY_TYPES);
 
 function property(overrides = {}) {
   return {

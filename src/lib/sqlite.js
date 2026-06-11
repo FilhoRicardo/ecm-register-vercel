@@ -20,6 +20,188 @@ export async function openEmptyDatabase() {
   return db;
 }
 
+export function seedSampleData(db) {
+  const alphaId = upsertProperty(db, {
+    name: "Sample Tower",
+    address: "Amsterdam, Netherlands",
+    total_floor_area: 12000,
+    crrem_country: "Netherlands",
+    crrem_property_type: "Office",
+    heating_carrier: "natural_gas",
+    cooling_carrier: "electric",
+    elec_cost_eur_per_kwh: 0.28,
+    heating_cost_eur_per_kwh: 0.11,
+    cooling_cost_eur_per_kwh: 0.28,
+    notes: "Sample property for demo mode."
+  });
+  const betaId = upsertProperty(db, {
+    name: "Sample Works",
+    address: "London, United Kingdom",
+    total_floor_area: 7600,
+    crrem_country: "United Kingdom",
+    crrem_property_type: "Office",
+    heating_carrier: "natural_gas",
+    cooling_carrier: "electric",
+    elec_cost_eur_per_kwh: 0.24,
+    heating_cost_eur_per_kwh: 0.09,
+    cooling_cost_eur_per_kwh: 0.24,
+    notes: "Second sample property for filters and exports."
+  });
+
+  const alphaTenant = upsertTenant(db, {
+    property_id: alphaId,
+    tenant_name: "North Anchor",
+    tenant_location_id: "AMS-NORTH",
+    tenant_floor_area: 4200,
+    location_label: "Floors 1-4",
+    notes: "Sample tenant."
+  });
+  upsertTenant(db, {
+    property_id: betaId,
+    tenant_name: "Studio Lease",
+    tenant_location_id: "LDN-STUDIO",
+    tenant_floor_area: 3100,
+    location_label: "Studio wing",
+    notes: "Sample tenant."
+  });
+
+  upsertEquipment(db, {
+    property_id: alphaId,
+    tenant_id: alphaTenant,
+    equipment_name: "AHU-01",
+    equipment_type: "Air Handling Unit",
+    brick_class: "brick:AHU",
+    dexma_location_id: "AMS-NORTH",
+    dexma_device_id: "AHU-01",
+    utility_type: "electricity",
+    notes: "Sample air handling unit."
+  });
+  upsertEquipment(db, {
+    property_id: betaId,
+    tenant_id: null,
+    equipment_name: "Boiler-01",
+    equipment_type: "Boiler",
+    brick_class: "brick:Boiler",
+    dexma_location_id: "LDN-PLANT",
+    dexma_device_id: "BOILER-01",
+    utility_type: "heating",
+    notes: "Sample gas boiler."
+  });
+
+  const ledId = upsertEcm(db, {
+    property_id: alphaId,
+    ref: "S-001",
+    title: "LED common area retrofit",
+    status: "Implemented",
+    investment_eur: 18000,
+    utility_type: "electricity",
+    energy_saving_kwh: 42000,
+    what_why: "Replace legacy lighting in common areas to reduce baseload electricity.",
+    pitfall: "Coordinate works outside tenant operating hours.",
+    action: "Validate post-install savings during the next reporting cycle.",
+    approved: true,
+    notes: "Sample implemented ECM."
+  });
+  upsertEcm(db, {
+    property_id: alphaId,
+    ref: "S-002",
+    title: "Optimise AHU schedules",
+    status: "Open",
+    investment_eur: 3500,
+    utility_type: "electricity",
+    energy_saving_kwh: 18000,
+    what_why: "Trim overnight and weekend runtime where occupancy data supports it.",
+    pitfall: "Confirm comfort constraints with tenant representatives.",
+    action: "Review BMS trend data and apply revised schedules.",
+    approved: false,
+    notes: "Sample open ECM."
+  });
+  upsertEcm(db, {
+    property_id: betaId,
+    ref: "S-003",
+    title: "Boiler weather compensation",
+    status: "In Progress",
+    investment_eur: 6000,
+    utility_type: "heating",
+    energy_saving_kwh: 26000,
+    what_why: "Tune flow temperatures to reduce gas consumption.",
+    pitfall: "Avoid low-temperature complaints during cold starts.",
+    action: "Commission revised compensation curve.",
+    approved: true,
+    notes: "Sample heating ECM."
+  });
+
+  upsertImplementedSaving(db, {
+    ecm_id: ledId,
+    property_id: alphaId,
+    utility_type: "electricity",
+    start_date: "2025-01-01",
+    end_date: "2025-12-31",
+    energy_saving_kwh: 39000,
+    unit_cost_eur_per_kwh: 0.28,
+    cost_saving_eur: 10920,
+    notes: "Sample measured saving."
+  });
+
+  for (const year of [2024, 2025]) {
+    for (let month = 1; month <= 12; month += 1) {
+      const usageMonth = `${year}-${String(month).padStart(2, "0")}`;
+      const seasonalHeat = month <= 3 || month >= 10 ? 14500 : 4200;
+      const seasonalCool = month >= 6 && month <= 9 ? 5200 : 900;
+      const improvement = year === 2025 ? 0.88 : 1;
+      upsertMonthlyUsage(db, {
+        property_id: alphaId,
+        tenant_id: null,
+        scope_type: "building",
+        usage_month: usageMonth,
+        electricity_kwh: Math.round((21500 + month * 120) * improvement),
+        heating_kwh: Math.round(seasonalHeat * improvement),
+        cooling_kwh: Math.round(seasonalCool * improvement),
+        notes: year === 2025 ? "Sample post-ECM usage." : "Sample baseline usage."
+      });
+    }
+  }
+  for (const usageMonth of ["2025-10", "2025-11", "2025-12"]) {
+    upsertMonthlyUsage(db, {
+      property_id: betaId,
+      tenant_id: null,
+      scope_type: "building",
+      usage_month: usageMonth,
+      electricity_kwh: 13200,
+      heating_kwh: 8100,
+      cooling_kwh: 600,
+      notes: "Short sample history."
+    });
+  }
+
+  upsertAdminTracker(db, {
+    property_id: alphaId,
+    admin_year: 2025,
+    admin_month: 12,
+    docunite_report: "done",
+    ecm_report: "done",
+    pre_meeting_notes: "done",
+    consumption_tracked: "done",
+    meeting_held: "done",
+    post_meeting_notes: "open",
+    status_quo: "done",
+    comments: "Sample month nearly complete."
+  });
+  upsertAdminTracker(db, {
+    property_id: betaId,
+    admin_year: 2025,
+    admin_month: 12,
+    docunite_report: "open",
+    ecm_report: "done",
+    pre_meeting_notes: "open",
+    consumption_tracked: "done",
+    meeting_held: "na",
+    post_meeting_notes: "na",
+    status_quo: "open",
+    comments: "Sample onboarding month."
+  });
+}
+
 function rows(db, sql, params = []) {
   const stmt = db.prepare(sql);
   stmt.bind(params);

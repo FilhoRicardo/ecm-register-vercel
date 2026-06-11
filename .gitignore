@@ -9,3 +9,8 @@ backups/
 ecm_calculations/
 exports/
 imports/
+graphify-out/cost.json
+graphify-out/cache/
+.gstack/
+.agents/
+.codex/

@@ -1,70 +1,37 @@
 import {
-  CRREM_COUNTRIES,
-  CRREM_DATA_ATTRIBUTION,
-  CRREM_DATA_VERSION,
   CRREM_PATHWAYS,
-  CRREM_PROPERTY_TYPES,
   CRREM_YEARS
 } from "../data/crremV205.js";
 import {
-  CRREM_EMISSION_FACTORS_SOURCE,
-  CRREM_EMISSION_FACTORS_VERSION,
   CRREM_FIXED_EF_OFFICIAL,
   CRREM_GRID_EF_OFFICIAL
 } from "../data/crremEmissionFactorsV205.js";
-
-const DEFAULT_COUNTRY = "United Kingdom";
-const DEFAULT_PROPERTY_TYPE = "Office";
-
-export const HEATING_CARRIER_OPTIONS = [
-  { value: "district_heating", label: "District heating" },
-  { value: "natural_gas", label: "Natural gas" },
-  { value: "heating_oil", label: "Heating oil" },
-  { value: "lpg", label: "LPG" },
-  { value: "coal", label: "Coal" },
-  { value: "electric", label: "Electric / heat pump" },
-  { value: "biomass", label: "Biomass" },
-  { value: "none", label: "None / not applicable" }
-];
-
-export const COOLING_CARRIER_OPTIONS = [
-  { value: "district_cooling", label: "District cooling" },
-  { value: "electric", label: "Electric chiller / heat pump" },
-  { value: "none", label: "None / not applicable" }
-];
-
-export {
+import {
+  COOLING_CARRIER_OPTIONS,
   CRREM_COUNTRIES,
   CRREM_DATA_ATTRIBUTION,
   CRREM_DATA_VERSION,
   CRREM_EMISSION_FACTORS_SOURCE,
   CRREM_EMISSION_FACTORS_VERSION,
   CRREM_PROPERTY_TYPES,
-  CRREM_YEARS
+  HEATING_CARRIER_OPTIONS,
+  inferCrremCountry,
+  normaliseCrremSettings
+} from "./crremMetadata.js";
+
+export {
+  COOLING_CARRIER_OPTIONS,
+  CRREM_COUNTRIES,
+  CRREM_DATA_ATTRIBUTION,
+  CRREM_DATA_VERSION,
+  CRREM_EMISSION_FACTORS_SOURCE,
+  CRREM_EMISSION_FACTORS_VERSION,
+  CRREM_PROPERTY_TYPES,
+  CRREM_YEARS,
+  HEATING_CARRIER_OPTIONS,
+  inferCrremCountry,
+  normaliseCrremSettings
 };
-
-export function inferCrremCountry(property = {}) {
-  const text = `${property.name || ""} ${property.address || ""} ${property.notes || ""}`.toLowerCase();
-  if (text.includes("amsterdam") || text.includes("netherlands") || text.includes("keizers") || text.includes("akzo") || text.includes("un studio")) {
-    return "Netherlands";
-  }
-  if (text.includes("london") || text.includes("manchester") || text.includes("united kingdom") || text.includes(" uk ") || text.includes("ito") || text.includes("som") || text.includes("xyz")) {
-    return "United Kingdom";
-  }
-  return "";
-}
-
-export function normaliseCrremSettings(property = {}) {
-  const inferredCountry = inferCrremCountry(property);
-  return {
-    country: property.crrem_country || inferredCountry || DEFAULT_COUNTRY,
-    propertyType: property.crrem_property_type || DEFAULT_PROPERTY_TYPE,
-    heatingCarrier: property.heating_carrier || "natural_gas",
-    coolingCarrier: property.cooling_carrier || "electric",
-    renewableConsumed: Number(property.renewable_consumed_kwh || 0),
-    renewableExported: Number(property.renewable_exported_kwh || 0)
-  };
-}
 
 export function getCrremDataAvailability(monthlyUsage, propertyId) {
   const annual = annualUsageByYear(monthlyUsage, propertyId);

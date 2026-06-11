@@ -24,6 +24,7 @@ import {
   insertAttachment,
   openEmptyDatabase,
   runSelect,
+  seedSampleData,
   setEcmObsidianFilename,
   setSavingObsidianFilename,
   tableCount,
@@ -41,18 +42,16 @@ import { adminTrackerFilename, buildAdminTrackerMarkdown, buildEcmMarkdown, buil
 import { downloadCrremPdfReport, downloadEcmReviewWorkbook, downloadExcelRegister, downloadPptxRegister, downloadUsageCsv, downloadUsageWorkbook, parseEcmReviewWorkbook } from "./lib/reports.js";
 import { EQUIPMENT_TYPE_TO_BRICK_CLASS, kwh, money, todayIso, utilityCost, yamlQuote } from "./lib/format.js";
 import {
-  buildCrremAnalysis,
   CRREM_COUNTRIES,
   CRREM_DATA_ATTRIBUTION,
   CRREM_DATA_VERSION,
   CRREM_EMISSION_FACTORS_SOURCE,
   CRREM_PROPERTY_TYPES,
   COOLING_CARRIER_OPTIONS,
-  getCrremDataAvailability,
   HEATING_CARRIER_OPTIONS,
   inferCrremCountry,
   normaliseCrremSettings
-} from "./lib/crrem.js";
+} from "./lib/crremMetadata.js";
 
 const FOLDERS = [
   { key: "propertyNotes", label: "Property Notes", required: true, description: "Obsidian folder for one structured property table per building" },
@@ -67,6 +66,36 @@ const FOLDERS = [
   { key: "openActions", label: "Open Actions", required: true, description: "Obsidian folder for property open action checklist Markdown files" },
   { key: "calculationFiles", label: "Calculations", required: true, description: "Local folder for ECM calculation evidence" }
 ];
+
+const FOLDER_LABELS = Object.fromEntries(FOLDERS.map((folder) => [folder.key, folder.label]));
+const allRequiredFolderKeys = FOLDERS.filter((folder) => folder.required).map((folder) => folder.key);
+
+function setupGateHint(folderKeys) {
+  const labels = folderKeys.map((key) => FOLDER_LABELS[key]).filter(Boolean);
+  if (!labels.length) return "";
+  if (labels.length === 1) return `This tab needs the ${labels[0]} folder.`;
+  return `This tab needs the ${labels.slice(0, -1).join(", ")} and ${labels.at(-1)} folders.`;
+}
+
+const SETUP_GATE_HINTS = Object.freeze({
+  dashboard: setupGateHint(["propertyNotes", "tenantNotes", "equipmentNotes", "ecmNotes", "savingNotes", "monthlyUsage", "adminTracker"]),
+  properties: setupGateHint(["propertyNotes"]),
+  tenants: setupGateHint(["propertyNotes", "tenantNotes"]),
+  equipment: setupGateHint(["propertyNotes", "tenantNotes", "equipmentNotes"]),
+  usage: setupGateHint(["propertyNotes", "tenantNotes", "monthlyUsage"]),
+  ecms: setupGateHint(["propertyNotes", "ecmNotes", "calculationFiles"]),
+  savings: setupGateHint(["propertyNotes", "ecmNotes", "savingNotes"]),
+  admintracker: setupGateHint(["propertyNotes", "adminTracker"]),
+  statusquo: setupGateHint(["propertyNotes", "statusQuo"]),
+  actions: setupGateHint(["propertyNotes", "openActions"]),
+  meetings: setupGateHint(["propertyNotes", "monthlyUsage", "ecmNotes", "meetingNotes"]),
+  data: setupGateHint(["propertyNotes", "tenantNotes", "monthlyUsage"]),
+  benchmark: setupGateHint(["propertyNotes", "monthlyUsage"]),
+  crrem: setupGateHint(["propertyNotes", "monthlyUsage"]),
+  reports: setupGateHint(["propertyNotes", "ecmNotes", "savingNotes", "monthlyUsage", "tenantNotes", "equipmentNotes"]),
+  database: setupGateHint(allRequiredFolderKeys),
+  admin: setupGateHint(allRequiredFolderKeys)
+});
 
 const NAV = [
   ["welcome", "Welcome"],
@@ -90,6 +119,12 @@ const NAV = [
   ["database", "Cache Lab"],
   ["admin", "Obsidian Sync"]
 ];
+
+const EMPTY_CRREM_AVAILABILITY = Object.freeze({
+  fullYears: [],
+  latestMonth: "",
+  usageSource: ""
+});
 
 const RESPONSIBLE_OPTIONS = [
   "Property Manager",
@@ -194,6 +229,7 @@ export default function App() {
   const [toast, setToast] = useState("");
   const [setupError, setSetupError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [demoMode, setDemoMode] = useState(false);
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
@@ -262,6 +298,10 @@ export default function App() {
       await idbSet(`folder_${key}`, handle);
       setHandles((prev) => ({ ...prev, [key]: handle }));
       setFolderStatuses((prev) => ({ ...prev, [key]: "granted" }));
+      if (demoMode) {
+        notify("Folder configured. Sample data remains in-memory until you resume a real workspace.");
+        return;
+      }
       if (key === "propertyNotes" && db) {
         const synced = await syncPropertyNotesFolder(db, handle, { requestPermission: false });
         notify(`Property Notes folder configured. Synced ${synced.count} property files.`);
@@ -303,6 +343,10 @@ export default function App() {
       const granted = await ensurePermission(handle, "readwrite");
       const status = granted ? "granted" : await permissionState(handle, "readwrite");
       setFolderStatuses((prev) => ({ ...prev, [key]: status }));
+      if (demoMode) {
+        notify(granted ? "Folder permission restored. Sample data remains in-memory." : "Folder permission was not granted.");
+        return;
+      }
       if (granted && key === "propertyNotes" && db) {
         const synced = await syncPropertyNotesFolder(db, handle, { requestPermission: false });
         notify(`Folder permission restored. Synced ${synced.count} property files.`);
@@ -356,8 +400,28 @@ export default function App() {
     setFolderStatuses({});
     setDb(null);
     setData(null);
+    setDemoMode(false);
     setActive("setup");
     notify("All folder assignments cleared.");
+  }
+
+  async function startDemoWorkspace() {
+    try {
+      setBusy(true);
+      setSetupError("");
+      const nextDb = await openEmptyDatabase();
+      seedSampleData(nextDb);
+      setDb(nextDb);
+      setData(getPortfolio(nextDb));
+      setDemoMode(true);
+      setActive("dashboard");
+      notify("Sample data loaded. Changes stay in memory and reset on refresh.");
+    } catch (error) {
+      setSetupError(error.message || String(error));
+      notify("Sample data load failed.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function loadObsidianWorkspace(allHandles = handles, options = {}) {
@@ -442,6 +506,7 @@ export default function App() {
       }
       const nextData = getPortfolio(nextDb);
       setData(nextData);
+      setDemoMode(false);
       setActive("dashboard");
       notify(`Workspace loaded from Obsidian: ${nextData.properties.length} properties, ${nextData.ecms.length} ECMs.${propertySyncMessage}${tenantSyncMessage}${equipmentSyncMessage}${ecmSyncMessage}${savingSyncMessage}${usageSyncMessage}${adminTrackerSyncMessage}`);
     } catch (error) {
@@ -454,7 +519,7 @@ export default function App() {
 
   async function persist(message = "Saved.") {
     setData(getPortfolio(db));
-    notify(message);
+    notify(demoMode && !message.toLowerCase().includes("sample") ? `${message} Sample changes reset on refresh.` : message);
   }
 
   async function saveProperty(event) {
@@ -572,10 +637,15 @@ export default function App() {
   }
 
   async function syncObsidianNotes() {
+    if (demoMode) {
+      notify("Sample mode is in-memory only. Connect folders to sync Obsidian notes.");
+      return;
+    }
     await loadObsidianWorkspace(handles, { requestAll: true });
   }
 
   async function syncPropertyNotesMarkdown(propertyId = null) {
+    if (demoMode) return;
     if (!handles.propertyNotes) return;
     try {
       await writePropertyMarkdownFiles(db, handles.propertyNotes, { propertyId });
@@ -585,6 +655,7 @@ export default function App() {
   }
 
   async function syncTenantMarkdown(propertyId = null) {
+    if (demoMode) return;
     if (!handles.tenantNotes) return;
     try {
       await writeTenantMarkdownFiles(db, handles.tenantNotes, { propertyId });
@@ -594,6 +665,7 @@ export default function App() {
   }
 
   async function syncEquipmentMarkdown(propertyId = null) {
+    if (demoMode) return;
     if (!handles.equipmentNotes) return;
     try {
       await writeEquipmentMarkdownFiles(db, handles.equipmentNotes, { propertyId });
@@ -603,6 +675,7 @@ export default function App() {
   }
 
   async function syncMonthlyUsageMarkdown(propertyId = null) {
+    if (demoMode) return;
     if (!handles.monthlyUsage) return;
     try {
       await writeMonthlyUsageMarkdownFiles(db, handles.monthlyUsage, { propertyId });
@@ -612,6 +685,7 @@ export default function App() {
   }
 
   async function syncAdminTrackerMarkdown(propertyId = null) {
+    if (demoMode) return;
     if (!handles.adminTracker) return;
     try {
       await writeAdminTrackerMarkdownFiles(db, handles.adminTracker, { propertyId });
@@ -621,6 +695,10 @@ export default function App() {
   }
 
   async function syncEcmMarkdownNotes() {
+    if (demoMode) {
+      notify("Sample mode is in-memory only. Connect folders to sync ECM notes.");
+      return;
+    }
     setBusy(true);
     try {
       const ecmSync = await writeAllEcmMarkdownFiles(db, handles.ecmNotes);
@@ -1004,6 +1082,20 @@ export default function App() {
     if (!ready) return;
     setBusy(true);
     try {
+      if (demoMode) {
+        const id = upsertEcm(db, {
+          ...ecmForm,
+          id: ecmForm.id || null,
+          property_id: Number(ecmForm.property_id),
+          approved: Boolean(ecmForm.approved)
+        });
+        const ecm = getEcms(db).find((item) => item.id === id);
+        setCalcFile(null);
+        setSelectedEcmId(String(id));
+        setEcmForm({ ...ecm, property_id: String(ecm.property_id), approved: Boolean(ecm.approved), investment_eur: ecm.investment_eur ?? "", energy_saving_kwh: ecm.energy_saving_kwh ?? "" });
+        await persist("ECM saved in sample data. Refresh resets sample changes.");
+        return;
+      }
       if (!handles.ecmNotes || !(await ensurePermission(handles.ecmNotes, "readwrite"))) throw new Error("ECM Notes folder permission was not granted.");
       setFolderStatuses((prev) => ({ ...prev, ecmNotes: "granted" }));
       if (calcFile) {
@@ -1054,7 +1146,7 @@ export default function App() {
   async function removeEcm() {
     if (!selectedEcmId || !window.confirm("Delete this ECM from the workspace? The Obsidian note will be removed when available.")) return;
     const existing = data.ecms.find((item) => item.id === Number(selectedEcmId));
-    if (existing?.obsidian_filename) {
+    if (!demoMode && existing?.obsidian_filename) {
       if (!handles.ecmNotes || !(await ensurePermission(handles.ecmNotes, "readwrite"))) {
         notify("ECM Notes folder permission was not granted.");
         return;
@@ -1085,8 +1177,6 @@ export default function App() {
     if (!ready) return;
     setBusy(true);
     try {
-      if (!handles.savingNotes || !(await ensurePermission(handles.savingNotes, "readwrite"))) throw new Error("Implemented Savings Notes folder permission was not granted.");
-      setFolderStatuses((prev) => ({ ...prev, savingNotes: "granted" }));
       const ecm = data.ecms.find((item) => item.id === Number(savingForm.ecm_id));
       if (!ecm) throw new Error("Select an implemented ECM before saving measured savings.");
       const propertyId = Number(ecm.property_id || savingForm.property_id);
@@ -1102,6 +1192,13 @@ export default function App() {
         unit_cost_eur_per_kwh: unitCost,
         cost_saving_eur: costSaving
       });
+      if (demoMode) {
+        setSavingForm(defaultSavingForm());
+        await persist("Implemented saving saved in sample data. Refresh resets sample changes.");
+        return;
+      }
+      if (!handles.savingNotes || !(await ensurePermission(handles.savingNotes, "readwrite"))) throw new Error("Implemented Savings Notes folder permission was not granted.");
+      setFolderStatuses((prev) => ({ ...prev, savingNotes: "granted" }));
       const saved = getImplementedSavings(db).find((item) => item.id === id);
       const filename = saved.obsidian_filename || savingFilename({ ...saved, ref: ecm.ref });
       await writeTextIntoFolder(handles.savingNotes, filename, buildSavingMarkdown(saved, ecm, property));
@@ -1121,7 +1218,7 @@ export default function App() {
     setBusy(true);
     try {
       deleteImplementedSaving(db, saving.id);
-      if (saving.obsidian_filename && handles.savingNotes && await ensurePermission(handles.savingNotes, "readwrite")) {
+      if (!demoMode && saving.obsidian_filename && handles.savingNotes && await ensurePermission(handles.savingNotes, "readwrite")) {
         try {
           await handles.savingNotes.removeEntry(saving.obsidian_filename);
         } catch (error) {
@@ -1139,6 +1236,10 @@ export default function App() {
 
   async function createMeetingNote(event) {
     event.preventDefault();
+    if (demoMode) {
+      notify("Sample mode is in-memory only. Meeting notes are not written.");
+      return;
+    }
     if (!handles.meetingNotes || !(await ensurePermission(handles.meetingNotes, "readwrite"))) {
       notify("Monthly Meeting Notes folder permission was not granted.");
       return;
@@ -1169,6 +1270,11 @@ export default function App() {
   }
 
   async function loadMeetingFiles() {
+    if (demoMode) {
+      setMeetingFiles([]);
+      notify("Sample mode is in-memory only. Meeting notes are not read from Obsidian.");
+      return [];
+    }
     if (!handles.meetingNotes || !(await ensurePermission(handles.meetingNotes, "readwrite"))) {
       notify("Monthly Meeting Notes folder permission was not granted.");
       return [];
@@ -1201,6 +1307,10 @@ export default function App() {
   }
 
   async function saveMeetingDraft() {
+    if (demoMode) {
+      notify("Sample mode is in-memory only. Meeting notes are not written.");
+      return;
+    }
     const file = meetingFiles.find((item) => item.name === selectedMeetingName);
     if (!file) return;
     const latest = await file.handle.getFile();
@@ -1221,7 +1331,7 @@ export default function App() {
       const reviewRows = await parseEcmReviewWorkbook(file);
       const existing = getEcms(db);
       const propertiesNow = getProperties(db);
-      const canWriteNotes = handles.ecmNotes ? await ensurePermission(handles.ecmNotes, "readwrite") : false;
+      const canWriteNotes = !demoMode && handles.ecmNotes ? await ensurePermission(handles.ecmNotes, "readwrite") : false;
       if (handles.ecmNotes) setFolderStatuses((prev) => ({ ...prev, ecmNotes: canWriteNotes ? "granted" : "denied" }));
       let updated = 0;
       let skipped = 0;
@@ -1303,7 +1413,7 @@ export default function App() {
           ))}
         </nav>
         <div className="status-panel">
-          <span className="pill">{ready ? "Workspace loaded" : "Setup required"}</span>
+          <span className="pill">{demoMode ? "Sample data" : ready ? "Workspace loaded" : "Setup required"}</span>
           <div>Vercel hosts the app only. Files stay local.</div>
         </div>
       </aside>
@@ -1322,11 +1432,17 @@ export default function App() {
           </div>
           <div className="hero-status">
             {active === "dashboard" ? <span className="pill">{formatDashboardDateTime(now)}</span> : null}
-            <span className="pill">{ready ? "Synced local workspace" : "Setup required"}</span>
+            <span className="pill">{demoMode ? "Sample mode" : ready ? "Synced local workspace" : "Setup required"}</span>
           </div>
         </div>
+        {demoMode ? (
+          <div className="sample-banner">
+            <strong>Sample data mode</strong>
+            <span>Changes stay in memory only and reset on refresh. Obsidian folders are not read or written.</span>
+          </div>
+        ) : null}
 
-        {active === "welcome" && <WelcomeView ready={ready} />}
+        {active === "welcome" && <WelcomeView ready={ready} demoMode={demoMode} startDemoWorkspace={startDemoWorkspace} busy={busy} />}
         {active === "workflow" && <WorkflowGuideView />}
         {active === "setup" && (
           <SetupView
@@ -1340,12 +1456,15 @@ export default function App() {
             setupError={setupError}
             busy={busy}
             ready={ready}
+            demoMode={demoMode}
+            startDemoWorkspace={startDemoWorkspace}
           />
         )}
-        {active === "dashboard" && <DashboardView data={data} ready={ready} now={now} />}
+        {active === "dashboard" && <DashboardView data={data} ready={ready} now={now} setupHint={SETUP_GATE_HINTS.dashboard} />}
         {active === "properties" && (
           <PropertiesView
             ready={ready}
+            setupHint={SETUP_GATE_HINTS.properties}
             properties={properties}
             form={propertyForm}
             setForm={setPropertyForm}
@@ -1356,6 +1475,7 @@ export default function App() {
         {active === "tenants" && (
           <TenantsView
             ready={ready}
+            setupHint={SETUP_GATE_HINTS.tenants}
             properties={properties}
             selectedPropertyId={selectedPropertyId}
             setSelectedPropertyId={setSelectedPropertyId}
@@ -1369,6 +1489,7 @@ export default function App() {
         {active === "equipment" && (
           <EquipmentView
             ready={ready}
+            setupHint={SETUP_GATE_HINTS.equipment}
             properties={properties}
             selectedPropertyId={selectedPropertyId}
             setSelectedPropertyId={setSelectedPropertyId}
@@ -1383,6 +1504,7 @@ export default function App() {
         {active === "ecms" && (
           <EcmView
             ready={ready}
+            setupHint={SETUP_GATE_HINTS.ecms}
             properties={properties}
             selectedPropertyId={selectedPropertyId}
             setSelectedPropertyId={setSelectedPropertyId}
@@ -1401,6 +1523,7 @@ export default function App() {
         {active === "savings" && (
           <SavingsView
             ready={ready}
+            setupHint={SETUP_GATE_HINTS.savings}
             properties={properties}
             ecms={data?.ecms || []}
             savings={data?.implementedSavings || []}
@@ -1414,6 +1537,7 @@ export default function App() {
         {active === "usage" && (
           <MonthlyUsageView
             ready={ready}
+            setupHint={SETUP_GATE_HINTS.usage}
             properties={properties}
             tenants={data?.tenants || []}
             usage={data?.monthlyUsage || []}
@@ -1428,6 +1552,7 @@ export default function App() {
         {active === "data" && (
           <DataView
             ready={ready}
+            setupHint={SETUP_GATE_HINTS.data}
             properties={properties}
             selectedPropertyId={selectedPropertyId}
             setSelectedPropertyId={setSelectedPropertyId}
@@ -1437,6 +1562,7 @@ export default function App() {
         {active === "benchmark" && (
           <BenchmarkView
             ready={ready}
+            setupHint={SETUP_GATE_HINTS.benchmark}
             properties={properties}
             selectedPropertyId={selectedPropertyId}
             setSelectedPropertyId={setSelectedPropertyId}
@@ -1446,6 +1572,7 @@ export default function App() {
         {active === "crrem" && (
           <CrremView
             ready={ready}
+            setupHint={SETUP_GATE_HINTS.crrem}
             properties={properties}
             selectedPropertyId={selectedPropertyId}
             setSelectedPropertyId={setSelectedPropertyId}
@@ -1455,6 +1582,7 @@ export default function App() {
         {active === "meetings" && (
           <MeetingsView
             ready={ready}
+            setupHint={SETUP_GATE_HINTS.meetings}
             properties={properties}
             form={meetingForm}
             setForm={setMeetingForm}
@@ -1471,6 +1599,7 @@ export default function App() {
         {active === "reports" && (
           <ReportsView
             ready={ready}
+            setupHint={SETUP_GATE_HINTS.reports}
             db={db}
             properties={properties}
             selectedProperty={selectedProperty}
@@ -1482,11 +1611,12 @@ export default function App() {
         {active === "statusquo" && (
           <StatusQuoView
             ready={ready}
+            setupHint={SETUP_GATE_HINTS.statusquo}
             properties={properties}
             selectedPropertyId={selectedPropertyId}
             setSelectedPropertyId={setSelectedPropertyId}
-            folderHandle={handles.statusQuo}
-            folderStatus={folderStatuses.statusQuo}
+            folderHandle={demoMode ? null : handles.statusQuo}
+            folderStatus={demoMode ? "" : folderStatuses.statusQuo}
             configureFolder={() => configureFolder("statusQuo")}
             notify={notify}
           />
@@ -1494,11 +1624,12 @@ export default function App() {
         {active === "actions" && (
           <OpenActionsView
             ready={ready}
+            setupHint={SETUP_GATE_HINTS.actions}
             properties={properties}
             selectedPropertyId={selectedPropertyId}
             setSelectedPropertyId={setSelectedPropertyId}
-            folderHandle={handles.openActions}
-            folderStatus={folderStatuses.openActions}
+            folderHandle={demoMode ? null : handles.openActions}
+            folderStatus={demoMode ? "" : folderStatuses.openActions}
             configureFolder={() => configureFolder("openActions")}
             notify={notify}
           />
@@ -1506,6 +1637,7 @@ export default function App() {
         {active === "admintracker" && (
           <AdminTrackerView
             ready={ready}
+            setupHint={SETUP_GATE_HINTS.admintracker}
             properties={properties}
             records={data?.adminTracker || []}
             form={adminForm}
@@ -1514,10 +1646,11 @@ export default function App() {
             remove={removeAdminTracker}
           />
         )}
-        {active === "database" && <DatabaseView ready={ready} db={db} sqlText={sqlText} setSqlText={setSqlText} runSql={runSql} sqlRows={sqlRows} />}
+        {active === "database" && <DatabaseView ready={ready} setupHint={SETUP_GATE_HINTS.database} db={db} sqlText={sqlText} setSqlText={setSqlText} runSql={runSql} sqlRows={sqlRows} />}
         {active === "admin" && (
           <DatabaseAdminView
             ready={ready}
+            setupHint={SETUP_GATE_HINTS.admin}
             db={db}
             data={data}
             syncObsidianNotes={syncObsidianNotes}
@@ -1530,7 +1663,7 @@ export default function App() {
   );
 }
 
-function WelcomeView({ ready }) {
+function WelcomeView({ ready, demoMode, startDemoWorkspace, busy }) {
   const workflow = [
     ["1", "Setup folders", "Connect the Obsidian note folders, calculation evidence folder, and optional report/import folders."],
     ["2", "Read Obsidian first", "Resume the workspace to rebuild the local cache from the configured Obsidian folders before analysis or reporting."],
@@ -1578,10 +1711,17 @@ function WelcomeView({ ready }) {
           <span className="eyebrow">CURRENT STATE</span>
           <h3>{ready ? "Workspace is loaded" : "Setup required"}</h3>
           <p className="muted">
-            {ready
+            {demoMode
+              ? "Sample data is loaded. You can explore every tab without folder grants; changes reset on refresh."
+              : ready
               ? "Your Obsidian-backed workspace is loaded. You can work from any tab and exports will download locally."
               : "Go to Setup, connect the required folders, then resume the workspace."}
           </p>
+          {!ready ? (
+            <button className="btn primary" type="button" disabled={busy} onClick={startDemoWorkspace}>
+              {busy ? "Loading..." : "Explore sample data"}
+            </button>
+          ) : null}
           <div className="artifact-callout">
             <strong>Markdown outputs</strong>
             <p>Properties, tenants, equipment, ECMs, implemented savings, monthly usage, admin tracker, and monthly meeting notes are the Obsidian `.md` records.</p>
@@ -1700,7 +1840,7 @@ function WorkflowGuideView() {
   );
 }
 
-function SetupView({ handles, folderStatuses, configureFolder, forgetFolder, forgetAllFolders, loadDatabase, data, setupError, busy, ready }) {
+function SetupView({ handles, folderStatuses, configureFolder, forgetFolder, forgetAllFolders, loadDatabase, data, setupError, busy, ready, demoMode, startDemoWorkspace }) {
   const requiredFolders = FOLDERS.filter((folder) => folder.required);
   const requiredConfigured = requiredFolders.every((folder) => handles[folder.key]);
   const configuredCount = FOLDERS.filter((folder) => handles[folder.key]).length;
@@ -1748,10 +1888,13 @@ function SetupView({ handles, folderStatuses, configureFolder, forgetFolder, for
         <p className="setup-note">{configuredCount} of {FOLDERS.length} folders selected. Required folders: {requiredConfigured ? "complete" : "not complete"}.</p>
         <div className="setup-footer">
           <button className="btn primary" disabled={!requiredConfigured || busy} onClick={loadDatabase}>{busy ? "Working..." : ready ? "Reload From Obsidian" : "Resume Workspace"}</button>
+          {!demoMode ? <button className="btn" type="button" disabled={busy} onClick={startDemoWorkspace}>Explore sample data</button> : null}
           <button className="btn danger" type="button" disabled={busy || !configuredCount} onClick={forgetAllFolders}>Forget all folders</button>
         </div>
         <p className="muted setup-note">
-          {ready
+          {demoMode
+            ? "Sample data is loaded in memory only. Refresh the page to return to normal startup."
+            : ready
             ? "Workspace cache is loaded from Obsidian. You can go to Dashboard or continue changing folder assignments."
             : requiredConfigured
               ? "Required folders are remembered. Resume Workspace restores permissions and reads the Obsidian notes."
@@ -1769,8 +1912,8 @@ function folderStatusLabel(handle, status) {
   return "Remembered";
 }
 
-function DashboardView({ data, ready, now }) {
-  if (!ready) return <EmptyState />;
+function DashboardView({ data, ready, now, setupHint }) {
+  if (!ready) return <EmptyState hint={setupHint} />;
   const ecms = data.ecms || [];
   const open = ecms.filter((item) => item.status === "Open");
   const implemented = ecms.filter((item) => item.status === "Implemented");
@@ -1838,8 +1981,8 @@ function DashboardView({ data, ready, now }) {
   );
 }
 
-function PropertiesView({ ready, properties, form, setForm, save, remove }) {
-  if (!ready) return <EmptyState />;
+function PropertiesView({ ready, setupHint, properties, form, setForm, save, remove }) {
+  if (!ready) return <EmptyState hint={setupHint} />;
   const set = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
   const inferredCountry = inferCrremCountry(form);
   return (
@@ -1920,8 +2063,8 @@ function PropertiesView({ ready, properties, form, setForm, save, remove }) {
   );
 }
 
-function TenantsView({ ready, properties, selectedPropertyId, setSelectedPropertyId, tenants, tenantForm, setTenantForm, saveTenant, removeTenant }) {
-  if (!ready) return <EmptyState />;
+function TenantsView({ ready, setupHint, properties, selectedPropertyId, setSelectedPropertyId, tenants, tenantForm, setTenantForm, saveTenant, removeTenant }) {
+  if (!ready) return <EmptyState hint={setupHint} />;
   const scopedTenants = tenants.filter((tenant) => tenant.property_id === Number(selectedPropertyId));
   const setTenant = (key, value) => setTenantForm((prev) => ({ ...prev, [key]: value }));
   return (
@@ -1969,8 +2112,8 @@ function TenantsView({ ready, properties, selectedPropertyId, setSelectedPropert
   );
 }
 
-function EquipmentView({ ready, properties, selectedPropertyId, setSelectedPropertyId, tenants, equipment, equipmentForm, setEquipmentForm, saveEquipment, removeEquipment }) {
-  if (!ready) return <EmptyState />;
+function EquipmentView({ ready, setupHint, properties, selectedPropertyId, setSelectedPropertyId, tenants, equipment, equipmentForm, setEquipmentForm, saveEquipment, removeEquipment }) {
+  if (!ready) return <EmptyState hint={setupHint} />;
   const scopedTenants = tenants.filter((tenant) => tenant.property_id === Number(selectedPropertyId));
   const scopedEquipment = equipment.filter((item) => item.property_id === Number(selectedPropertyId));
   const setEquip = (key, value) => setEquipmentForm((prev) => ({ ...prev, [key]: value }));
@@ -2025,8 +2168,8 @@ function EquipmentView({ ready, properties, selectedPropertyId, setSelectedPrope
 }
 
 function EcmView(props) {
-  const { ready, properties, selectedPropertyId, setSelectedPropertyId, filteredEcms, ecmForm, setEcmForm, saveEcm, editEcm, selectedEcmId, removeEcm, calcFile, setCalcFile, busy } = props;
-  if (!ready) return <EmptyState />;
+  const { ready, setupHint, properties, selectedPropertyId, setSelectedPropertyId, filteredEcms, ecmForm, setEcmForm, saveEcm, editEcm, selectedEcmId, removeEcm, calcFile, setCalcFile, busy } = props;
+  if (!ready) return <EmptyState hint={setupHint} />;
   const set = (key, value) => setEcmForm((prev) => ({ ...prev, [key]: value }));
   return (
     <section className="section">
@@ -2086,8 +2229,8 @@ function EcmView(props) {
   );
 }
 
-function SavingsView({ ready, properties, ecms, savings, form, setForm, save, remove, busy }) {
-  if (!ready) return <EmptyState />;
+function SavingsView({ ready, setupHint, properties, ecms, savings, form, setForm, save, remove, busy }) {
+  if (!ready) return <EmptyState hint={setupHint} />;
   const selectedEcm = ecms.find((ecm) => ecm.id === Number(form.ecm_id));
   const selectedPropertyId = Number(form.property_id || selectedEcm?.property_id || properties[0]?.id || "");
   const selectedProperty = properties.find((property) => property.id === selectedPropertyId) || properties.find((property) => property.id === selectedEcm?.property_id);
@@ -2186,9 +2329,9 @@ function SavingsView({ ready, properties, ecms, savings, form, setForm, save, re
   );
 }
 
-function MonthlyUsageView({ ready, properties, tenants, usage, form, setForm, save, remove, downloadUsage, downloadUsageCsv }) {
+function MonthlyUsageView({ ready, setupHint, properties, tenants, usage, form, setForm, save, remove, downloadUsage, downloadUsageCsv }) {
   const [usageTab, setUsageTab] = useState(form.scope_type === "tenant" ? "tenant" : "landlord");
-  if (!ready) return <EmptyState />;
+  if (!ready) return <EmptyState hint={setupHint} />;
   const propertyTenants = tenants.filter((tenant) => tenant.property_id === Number(form.property_id));
   const selectedPropertyId = Number(form.property_id);
   const landlordUsage = usage
@@ -2301,7 +2444,7 @@ function MonthlyUsageView({ ready, properties, tenants, usage, form, setForm, sa
   );
 }
 
-function DataView({ ready, properties, selectedPropertyId, setSelectedPropertyId, monthlyUsage }) {
+function DataView({ ready, setupHint, properties, selectedPropertyId, setSelectedPropertyId, monthlyUsage }) {
   const availableYears = useMemo(() => dataViewYears(monthlyUsage), [monthlyUsage]);
   const fallbackYear = availableYears[0] || String(new Date().getFullYear());
   const [primaryYear, setPrimaryYear] = useState(fallbackYear);
@@ -2317,7 +2460,7 @@ function DataView({ ready, properties, selectedPropertyId, setSelectedPropertyId
     setComparisonYearB((prev) => availableYears.includes(prev) ? prev : availableYears[2] || availableYears[0]);
   }, [availableYears]);
 
-  if (!ready) return <EmptyState />;
+  if (!ready) return <EmptyState hint={setupHint} />;
   const property = properties.find((item) => item.id === Number(selectedPropertyId)) || properties[0] || null;
   const selectedYears = [primaryYear, comparisonYearA, comparisonYearB].filter(Boolean);
   const series = buildDataViewSeries(monthlyUsage, {
@@ -2405,7 +2548,7 @@ function DataView({ ready, properties, selectedPropertyId, setSelectedPropertyId
   );
 }
 
-function BenchmarkView({ ready, properties, selectedPropertyId, setSelectedPropertyId, monthlyUsage }) {
+function BenchmarkView({ ready, setupHint, properties, selectedPropertyId, setSelectedPropertyId, monthlyUsage }) {
   const selectedId = Number(selectedPropertyId) || properties[0]?.id || "";
   const property = properties.find((item) => item.id === Number(selectedId)) || properties[0] || null;
   const availableYears = useMemo(() => benchmarkYears(monthlyUsage, property?.id), [monthlyUsage, property?.id]);
@@ -2425,7 +2568,7 @@ function BenchmarkView({ ready, properties, selectedPropertyId, setSelectedPrope
     setRollingEndMonth((prev) => availableMonths.includes(prev) ? prev : availableMonths[0]);
   }, [availableMonths]);
 
-  if (!ready) return <EmptyState />;
+  if (!ready) return <EmptyState hint={setupHint} />;
   const analysis = buildBenchmarkAnalysis({
     property,
     properties,
@@ -2567,15 +2710,32 @@ function BenchmarkView({ ready, properties, selectedPropertyId, setSelectedPrope
   );
 }
 
-function CrremView({ ready, properties, selectedPropertyId, setSelectedPropertyId, monthlyUsage }) {
+function CrremView({ ready, setupHint, properties, selectedPropertyId, setSelectedPropertyId, monthlyUsage }) {
   const [mode, setMode] = useState("first_complete_year");
   const [reportingYear, setReportingYear] = useState("");
   const [rollingEndMonth, setRollingEndMonth] = useState("");
+  const [crremModule, setCrremModule] = useState(null);
+  const [crremLoadError, setCrremLoadError] = useState("");
   const selectedId = Number(selectedPropertyId) || properties[0]?.id || "";
   const property = properties.find((item) => item.id === Number(selectedId)) || properties[0] || null;
+
+  useEffect(() => {
+    let cancelled = false;
+    import("./lib/crrem.js")
+      .then((module) => {
+        if (!cancelled) setCrremModule(module);
+      })
+      .catch((error) => {
+        if (!cancelled) setCrremLoadError(error.message || String(error));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const availability = useMemo(
-    () => getCrremDataAvailability(monthlyUsage, property?.id),
-    [monthlyUsage, property?.id]
+    () => crremModule?.getCrremDataAvailability(monthlyUsage, property?.id) || EMPTY_CRREM_AVAILABILITY,
+    [crremModule, monthlyUsage, property?.id]
   );
 
   useEffect(() => {
@@ -2585,11 +2745,11 @@ function CrremView({ ready, properties, selectedPropertyId, setSelectedPropertyI
   }, [availability.fullYears, availability.latestMonth, reportingYear, rollingEndMonth]);
 
   const analysis = useMemo(
-    () => buildCrremAnalysis({ property, monthlyUsage, mode, reportingYear, rollingEndMonth }),
-    [property, monthlyUsage, mode, reportingYear, rollingEndMonth]
+    () => crremModule?.buildCrremAnalysis({ property, monthlyUsage, mode, reportingYear, rollingEndMonth }) || { ok: false, error: crremLoadError || "Loading CRREM data..." },
+    [crremModule, crremLoadError, property, monthlyUsage, mode, reportingYear, rollingEndMonth]
   );
 
-  if (!ready) return <EmptyState />;
+  if (!ready) return <EmptyState hint={setupHint} />;
   const settings = property ? normaliseCrremSettings(property) : { country: "", propertyType: "" };
   const chartPoints = analysis.ok ? combineCrremSeries(analysis.historical, analysis.projected) : [];
   return (
@@ -2696,7 +2856,7 @@ function CrremView({ ready, properties, selectedPropertyId, setSelectedPropertyI
   );
 }
 
-function MeetingsView({ ready, properties, form, setForm, save, loadMeetingFiles, meetingFiles, selectedMeetingName, selectMeeting, meetingDraft, setMeetingDraft, saveMeetingDraft }) {
+function MeetingsView({ ready, setupHint, properties, form, setForm, save, loadMeetingFiles, meetingFiles, selectedMeetingName, selectMeeting, meetingDraft, setMeetingDraft, saveMeetingDraft }) {
   const [mode, setMode] = useState("new");
   const [loadedOnce, setLoadedOnce] = useState(false);
   useEffect(() => {
@@ -2704,7 +2864,7 @@ function MeetingsView({ ready, properties, form, setForm, save, loadMeetingFiles
     setLoadedOnce(true);
     loadMeetingFiles();
   }, [ready, mode, loadedOnce, loadMeetingFiles]);
-  if (!ready) return <EmptyState />;
+  if (!ready) return <EmptyState hint={setupHint} />;
   const set = (key, value) => setForm((prev) => ({ ...prev, [key]: value }));
   const selectedFile = meetingFiles.find((file) => file.name === selectedMeetingName);
   return (
@@ -2778,8 +2938,8 @@ function MeetingsView({ ready, properties, form, setForm, save, loadMeetingFiles
   );
 }
 
-function ReportsView({ ready, db, properties, selectedProperty, setSelectedPropertyId, importEcmReviewWorkbook, busy }) {
-  if (!ready) return <EmptyState />;
+function ReportsView({ ready, setupHint, db, properties, selectedProperty, setSelectedPropertyId, importEcmReviewWorkbook, busy }) {
+  if (!ready) return <EmptyState hint={setupHint} />;
   return (
     <section className="section">
       <h3>Reports</h3>
@@ -2816,7 +2976,7 @@ function ReportsView({ ready, db, properties, selectedProperty, setSelectedPrope
   );
 }
 
-function StatusQuoView({ ready, properties, selectedPropertyId, setSelectedPropertyId, folderHandle, folderStatus, configureFolder, notify }) {
+function StatusQuoView({ ready, setupHint, properties, selectedPropertyId, setSelectedPropertyId, folderHandle, folderStatus, configureFolder, notify }) {
   const selectedId = Number(selectedPropertyId) || properties[0]?.id || "";
   const property = properties.find((item) => item.id === Number(selectedId)) || properties[0] || null;
   const now = new Date();
@@ -2883,7 +3043,7 @@ function StatusQuoView({ ready, properties, selectedPropertyId, setSelectedPrope
     }
   }
 
-  if (!ready) return <EmptyState />;
+  if (!ready) return <EmptyState hint={setupHint} />;
   return (
     <section className="section">
       <div className="section-head">
@@ -2949,7 +3109,7 @@ function StatusQuoView({ ready, properties, selectedPropertyId, setSelectedPrope
   );
 }
 
-function OpenActionsView({ ready, properties, selectedPropertyId, setSelectedPropertyId, folderHandle, folderStatus, configureFolder, notify }) {
+function OpenActionsView({ ready, setupHint, properties, selectedPropertyId, setSelectedPropertyId, folderHandle, folderStatus, configureFolder, notify }) {
   const selectedId = Number(selectedPropertyId) || properties[0]?.id || "";
   const property = properties.find((item) => item.id === Number(selectedId)) || properties[0] || null;
   const [actions, setActions] = useState([]);
@@ -3034,7 +3194,7 @@ function OpenActionsView({ ready, properties, selectedPropertyId, setSelectedPro
     }
   }
 
-  if (!ready) return <EmptyState />;
+  if (!ready) return <EmptyState hint={setupHint} />;
   const openCount = actions.filter((action) => !action.done).length;
   const closedCount = actions.length - openCount;
   return (
@@ -3101,8 +3261,8 @@ function OpenActionsView({ ready, properties, selectedPropertyId, setSelectedPro
   );
 }
 
-function AdminTrackerView({ ready, properties, records, form, setForm, save, remove }) {
-  if (!ready) return <EmptyState />;
+function AdminTrackerView({ ready, setupHint, properties, records, form, setForm, save, remove }) {
+  if (!ready) return <EmptyState hint={setupHint} />;
   const selectedPropertyId = Number(form.property_id || properties[0]?.id || "");
   const propertyRecords = (records || []).filter((record) => record.property_id === selectedPropertyId);
   const sortedRecords = [...propertyRecords].sort((a, b) => {
@@ -3205,8 +3365,8 @@ function AdminTrackerView({ ready, properties, records, form, setForm, save, rem
   );
 }
 
-function DatabaseView({ ready, db, sqlText, setSqlText, runSql, sqlRows }) {
-  if (!ready) return <EmptyState />;
+function DatabaseView({ ready, setupHint, db, sqlText, setSqlText, runSql, sqlRows }) {
+  if (!ready) return <EmptyState hint={setupHint} />;
   const tables = ["properties", "tenants", "equipment", "ecms", "monthly_utility_usage", "monthly_admin_tracker", "ecm_measured_savings", "ecm_attachments"];
   return (
     <section className="section">
@@ -3232,13 +3392,14 @@ function DatabaseView({ ready, db, sqlText, setSqlText, runSql, sqlRows }) {
 
 function DatabaseAdminView({
   ready,
+  setupHint,
   db,
   data,
   syncObsidianNotes,
   syncEcmMarkdownNotes,
   busy
 }) {
-  if (!ready) return <EmptyState />;
+  if (!ready) return <EmptyState hint={setupHint} />;
   const health = databaseHealth(db);
   const integrity = health.integrity?.[0]?.integrity_check || "unknown";
   const foreignKeyIssues = health.foreignKeys?.length || 0;
@@ -3517,7 +3678,7 @@ function BenchmarkComparisonChart({ analysis }) {
         const baseY = pad.top + 44 + rowIndex * 158;
         return (
           <g key={row.key}>
-            <text x={18} y={baseY + 20} className="benchmark-row-label">{row.label}</text>
+            <text x={18} y={baseY - 8} className="benchmark-row-label">{row.label}</text>
             {groups.map((group, groupIndex) => {
               const y = baseY + groupIndex * 26;
               const value = row[group.key];
@@ -4319,8 +4480,16 @@ function adminStatusClass(value) {
   return `is-${normaliseAdminStatus(value)}`;
 }
 
-function EmptyState() {
-  return <section className="section"><div className="card"><h3>Setup Required</h3><p className="muted">Configure the required Obsidian folders and resume the workspace first.</p></div></section>;
+function EmptyState({ hint = "" }) {
+  return (
+    <section className="section">
+      <div className="card">
+        <h3>Setup Required</h3>
+        <p className="muted">Configure the required Obsidian folders and resume the workspace first.</p>
+        {hint ? <p className="muted">{hint}</p> : null}
+      </div>
+    </section>
+  );
 }
 
 function defaultSavingForm() {

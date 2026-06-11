@@ -1,18 +1,15 @@
-import ExcelJS from "exceljs/dist/exceljs.min.js";
-import pptxgen from "pptxgenjs";
 import reportTemplateCoverUrl from "../assets/report-template-cover.jpeg";
 import reportTemplatePageUrl from "../assets/report-template-page.jpeg";
 import savillsLogoUrl from "../assets/savills-logo.svg";
 import { downloadBlob } from "./storage.js";
 import { kwh, money, slug } from "./format.js";
 import {
-  buildCrremAnalysis,
   COOLING_CARRIER_OPTIONS,
   CRREM_DATA_ATTRIBUTION,
   CRREM_DATA_VERSION,
   CRREM_EMISSION_FACTORS_SOURCE,
   HEATING_CARRIER_OPTIONS
-} from "./crrem.js";
+} from "./crremMetadata.js";
 import { getEcms, getEquipment, getImplementedSavings, getMonthlyUsage, getProperties, getTenants } from "./sqlite.js";
 
 export const ECM_REVIEW_HEADERS = [
@@ -77,7 +74,18 @@ const PPT_BORDER = "BACBBE";
 const PPT_RED = "CE181E";
 let reportTemplateAssets = null;
 
+async function loadExcelJS() {
+  const module = await import("exceljs/dist/exceljs.min.js");
+  return module.default || module;
+}
+
+async function loadPptxgen() {
+  const module = await import("pptxgenjs");
+  return module.default || module;
+}
+
 export async function downloadExcelRegister(db, property = null) {
+  const ExcelJS = await loadExcelJS();
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "ECM Register";
   workbook.created = new Date();
@@ -132,6 +140,7 @@ export async function downloadExcelRegister(db, property = null) {
 }
 
 export async function downloadEcmReviewWorkbook(db, property = null) {
+  const ExcelJS = await loadExcelJS();
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "ECM Register";
   workbook.created = new Date();
@@ -172,6 +181,7 @@ export async function downloadEcmReviewWorkbook(db, property = null) {
 }
 
 export async function downloadUsageWorkbook(db) {
+  const ExcelJS = await loadExcelJS();
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "ECM Register";
   workbook.created = new Date();
@@ -207,6 +217,7 @@ export function downloadUsageCsv(db) {
 }
 
 export async function parseEcmReviewWorkbook(file) {
+  const ExcelJS = await loadExcelJS();
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(await file.arrayBuffer());
   const worksheet = workbook.getWorksheet("ECM Review") || workbook.worksheets[0];
@@ -233,7 +244,7 @@ export async function parseEcmReviewWorkbook(file) {
 
 export async function downloadPptxRegister(db, property) {
   if (!property) return;
-  const assets = await getReportTemplateAssets();
+  const [assets, PptxGen] = await Promise.all([getReportTemplateAssets(), loadPptxgen()]);
   const ecms = getEcms(db, property.id);
   const tenants = getTenants(db).filter((row) => row.property_id === property.id);
   const equipment = getEquipment(db).filter((row) => row.property_id === property.id);
@@ -246,7 +257,7 @@ export async function downloadPptxRegister(db, property) {
     measuredCost: sum(savings, "cost_saving_eur")
   };
 
-  const pptx = new pptxgen();
+  const pptx = new PptxGen();
   pptx.defineLayout({ name: "SAVILLS_A4_PORTRAIT", width: PPT_W, height: PPT_H });
   pptx.layout = "SAVILLS_A4_PORTRAIT";
   pptx.author = "ECM Register";
@@ -283,6 +294,7 @@ export async function downloadPptxRegister(db, property) {
 
 export async function downloadCrremPdfReport(db, property) {
   if (!property) return;
+  const { buildCrremAnalysis } = await import("./crrem.js");
   const monthlyUsage = getMonthlyUsage(db, property.id);
   const analysis = buildCrremAnalysis({ property, monthlyUsage, mode: "first_complete_year" });
   if (!analysis.ok) throw new Error(analysis.error || "CRREM analysis could not be generated.");

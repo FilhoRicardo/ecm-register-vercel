@@ -32,17 +32,42 @@ The app asks for these folders:
 - Open Actions Folder
 - Calculation Files Folder
 
-Chrome or Microsoft Edge is required because the app uses the File System Access API.
-
 ## Development
+
+Chrome or Microsoft Edge is required because the app uses the File System Access API.
 
 ```bash
 npm install
 npm run dev
 ```
 
+## Backend / Sync
+
+The app includes two Vercel API routes for optional Supabase sync and backup workflows:
+
+- `api/monthly-usage-sync.js` accepts `POST` requests to upsert or delete monthly utility usage rows in the `monthly_utility_usage` Supabase table.
+- `api/supabase-backup.js` accepts `POST` requests with a SQLite backup payload and uploads it to Supabase Storage, including a latest-copy object.
+
+Both routes require bearer-token auth using the `Authorization: Bearer <token>` header. The token must match the server-only `BACKUP_UPLOAD_TOKEN` environment variable.
+
+Required server-only Vercel environment variables:
+
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `BACKUP_UPLOAD_TOKEN`
+
+Optional server-only backup variables:
+
+- `SUPABASE_BACKUP_BUCKET`
+- `SUPABASE_BACKUP_PREFIX`
+
+Client-side Supabase variables, when used, must be prefixed with `VITE_` and are baked into the browser bundle:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
+
 ## Deployment
 
-Deploy as a static Vite app on Vercel.
+Deploy as a Vite app on Vercel with the included serverless API routes.
 
-The files are not uploaded to Vercel. Vercel hosts only the frontend app bundle.
+Local Obsidian files are not uploaded to Vercel during normal browser-local use. Vercel hosts the frontend app bundle and the optional Supabase sync/backup endpoints described above.

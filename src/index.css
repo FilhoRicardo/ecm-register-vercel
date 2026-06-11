@@ -1806,3 +1806,14 @@ main table td {
 .section-head h3 {
   font-size: 20px;
 }
+
+/* Contrast fix: .sample-banner used dark-theme tokens (light amber text on a
+   translucent dark fill) which washes out on the light theme. */
+.sample-banner {
+  color: #7c2d12;
+  background: rgba(217, 119, 6, 0.10);
+  border-color: rgba(180, 83, 9, 0.35);
+}
+.sample-banner span {
+  color: #92400e;
+}

@@ -69,26 +69,26 @@ const FOLDERS = [
 ];
 
 const NAV = [
-  ["welcome", "👋 Welcome"],
-  ["workflow", "\u{1F5D3}\u{FE0F} Workflow Guide"],
-  ["setup", "⚙️ Setup"],
-  ["dashboard", "🎯 Dashboard"],
-  ["properties", "🏢 Properties"],
-  ["tenants", "👥 Tenants"],
-  ["equipment", "🧰 Equipment"],
-  ["usage", "📊 Monthly Usage"],
-  ["ecms", "⚡ ECMs"],
-  ["savings", "💶 Implemented Savings"],
-  ["admintracker", "\u{1F5C2}\u{FE0F} Admin Tracker"],
-  ["statusquo", "\u{1F4CD} Status Quo"],
-  ["actions", "\u{2611}\u{FE0F} Open Actions"],
-  ["meetings", "📝 Monthly Meetings"],
-  ["data", "📈 Data View"],
-  ["benchmark", "\u{1F3C1} Benchmark"],
-  ["crrem", "🌍 CRREM Plot"],
-  ["reports", "📤 Reports"],
-  ["database", "🧪 Cache Lab"],
-  ["admin", "🛡️ Obsidian Sync"]
+  ["welcome", "Welcome"],
+  ["workflow", "Workflow Guide"],
+  ["setup", "Setup"],
+  ["dashboard", "Dashboard"],
+  ["properties", "Properties"],
+  ["tenants", "Tenants"],
+  ["equipment", "Equipment"],
+  ["usage", "Monthly Usage"],
+  ["ecms", "ECMs"],
+  ["savings", "Implemented Savings"],
+  ["admintracker", "Admin Tracker"],
+  ["statusquo", "Status Quo"],
+  ["actions", "Open Actions"],
+  ["meetings", "Monthly Meetings"],
+  ["data", "Data View"],
+  ["benchmark", "Benchmark"],
+  ["crrem", "CRREM Plot"],
+  ["reports", "Reports"],
+  ["database", "Cache Lab"],
+  ["admin", "Obsidian Sync"]
 ];
 
 const RESPONSIBLE_OPTIONS = [
@@ -1291,7 +1291,7 @@ export default function App() {
       {toast ? <div className="toast">{toast}</div> : null}
       <aside className="sidebar">
         <div className="brand">
-          <h1>⚡ ECM Register</h1>
+          <h1><span className="brand-mark" aria-hidden="true">✲</span><span>ECM Register</span></h1>
           <p>Obsidian-backed local workspace</p>
         </div>
         <nav className="nav">
@@ -1708,7 +1708,7 @@ function SetupView({ handles, folderStatuses, configureFolder, forgetFolder, for
     <section className="setup-screen">
       <div className="setup-panel">
         <div className="setup-title">
-          <div className="setup-icon">⚡</div>
+          <div className="setup-icon" aria-hidden="true">✲</div>
           <span className="eyebrow">LOCAL WORKSPACE</span>
           <h3>Connect your folders</h3>
           <p className="muted">Pick each local folder once per device. The files stay on your machine; the app only remembers browser folder permissions.</p>
@@ -3456,10 +3456,10 @@ function DataHealthTable({ years, health }) {
 
 function UsageComparisonLegend({ years, primaryYear }) {
   const comparisonYears = years.filter((year) => year !== primaryYear);
-  const colors = ["#a78bfa", "#22d3ee"];
+  const colors = ["var(--aster-blue)", "var(--aster-dot-holiday)"];
   return (
     <div className="toolbar" style={{ margin: "4px 0 10px" }}>
-      <span className="pill"><span style={{ color: "#38bdf8" }}>■</span> {primaryYear} bars</span>
+      <span className="pill"><span style={{ color: "var(--aster-green)" }}>■</span> {primaryYear} bars</span>
       {comparisonYears.map((year, index) => (
         <span className="pill" key={year}><span style={{ color: colors[index % colors.length] }}>●</span> {year} line</span>
       ))}
@@ -3562,7 +3562,7 @@ function UsageComparisonChart({ years, primaryYear, series }) {
   const barW = Math.min(42, monthStep * 0.62);
   const primary = series[primaryYear] || [];
   const comparisonYears = years.filter((year) => year !== primaryYear);
-  const colors = ["#a78bfa", "#22d3ee"];
+  const colors = ["var(--aster-blue)", "var(--aster-dot-holiday)"];
   return (
     <svg className="usage-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Monthly usage comparison">
       <line x1={pad.left} y1={pad.top} x2={pad.left} y2={height - pad.bottom} className="chart-axis" />

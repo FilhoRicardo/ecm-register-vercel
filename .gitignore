@@ -5,6 +5,8 @@ dist/
 *.log
 *.tmp
 coverage/
+test-results/
+playwright-report/
 backups/
 ecm_calculations/
 exports/
@@ -14,3 +16,4 @@ graphify-out/cache/
 .gstack/
 .agents/
 .codex/
+.claude/settings.local.json

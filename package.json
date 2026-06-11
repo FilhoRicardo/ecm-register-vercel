@@ -9,7 +9,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test:crrem": "node scripts/crrem-smoke-test.mjs",
+    "lint": "eslint . --max-warnings 3",
+    "test": "vitest run",
+    "test:crrem": "vitest run tests/crrem.spec.js",
+    "test:e2e": "playwright test",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -21,5 +24,14 @@
     "react-dom": "18.2.0",
     "sql.js": "1.10.3",
     "vite": "5.1.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@playwright/test": "^1.60.0",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.6.0",
+    "vitest": "^4.1.8"
   }
 }

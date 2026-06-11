@@ -71,7 +71,6 @@ const PPT_DARK = "184A2C";
 const PPT_MUTED = "5E755E";
 const PPT_LIGHT = "EFF6F0";
 const PPT_BORDER = "BACBBE";
-const PPT_RED = "CE181E";
 let reportTemplateAssets = null;
 
 async function loadExcelJS() {
@@ -602,7 +601,7 @@ async function assetDataUrl(url, label, required = false) {
       reader.onerror = () => reject(reader.error);
       reader.readAsDataURL(blob);
     });
-  } catch (error) {
+  } catch {
     if (required) throw new Error(`${label} failed to load. The PPTX report template assets are missing or unavailable.`);
     return null;
   }
@@ -977,9 +976,11 @@ function pdfColor(hex, operator) {
   return `${r.toFixed(3)} ${g.toFixed(3)} ${b.toFixed(3)} ${operator}`;
 }
 
+const PDF_SAFE_CHAR_PATTERN = new RegExp(`[^${String.fromCharCode(9, 10, 13)} -~]`, "g");
+
 function escapePdf(value) {
   return String(value ?? "")
-    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, " ")
+    .replace(PDF_SAFE_CHAR_PATTERN, " ")
     .replace(/\\/g, "\\\\")
     .replace(/\(/g, "\\(")
     .replace(/\)/g, "\\)");

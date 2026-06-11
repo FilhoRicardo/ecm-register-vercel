@@ -265,7 +265,6 @@ export default function App() {
     if (!data?.ecms) return [];
     return selectedProperty ? data.ecms.filter((ecm) => ecm.property_id === selectedProperty.id) : data.ecms;
   }, [data, selectedProperty]);
-  const implementedEcms = useMemo(() => (data?.ecms || []).filter((ecm) => ecm.status === "Implemented"), [data]);
   const ready = Boolean(db);
 
   async function boot() {
@@ -332,50 +331,6 @@ export default function App() {
       if (error?.name === "AbortError") return;
       setSetupError(error.message || String(error));
       notify("Folder setup failed.");
-    }
-  }
-
-  async function restoreFolderPermission(key) {
-    try {
-      setSetupError("");
-      const handle = handles[key];
-      if (!handle) return configureFolder(key);
-      const granted = await ensurePermission(handle, "readwrite");
-      const status = granted ? "granted" : await permissionState(handle, "readwrite");
-      setFolderStatuses((prev) => ({ ...prev, [key]: status }));
-      if (demoMode) {
-        notify(granted ? "Folder permission restored. Sample data remains in-memory." : "Folder permission was not granted.");
-        return;
-      }
-      if (granted && key === "propertyNotes" && db) {
-        const synced = await syncPropertyNotesFolder(db, handle, { requestPermission: false });
-        notify(`Folder permission restored. Synced ${synced.count} property files.`);
-        return;
-      }
-      if (granted && key === "tenantNotes" && db) {
-        const synced = await writeTenantMarkdownFiles(db, handle, { requestPermission: false });
-        notify(`Folder permission restored. Synced ${synced.count} tenant files.`);
-        return;
-      }
-      if (granted && key === "equipmentNotes" && db) {
-        const synced = await writeEquipmentMarkdownFiles(db, handle, { requestPermission: false });
-        notify(`Folder permission restored. Synced ${synced.count} equipment files.`);
-        return;
-      }
-      if (granted && key === "monthlyUsage" && db) {
-        const synced = await writeMonthlyUsageMarkdownFiles(db, handle, { requestPermission: false });
-        notify(`Folder permission restored. Synced ${synced.count} usage files.`);
-        return;
-      }
-      if (granted && key === "adminTracker" && db) {
-        const synced = await writeAdminTrackerMarkdownFiles(db, handle, { requestPermission: false });
-        notify(`Folder permission restored. Synced ${synced.count} tracker files.`);
-        return;
-      }
-      notify(granted ? "Folder permission restored." : "Folder permission was not granted.");
-    } catch (error) {
-      setSetupError(error.message || String(error));
-      notify("Folder permission restore failed.");
     }
   }
 
@@ -1054,29 +1009,6 @@ export default function App() {
     return { count };
   }
 
-  async function writeSavingMarkdownFiles(targetDb, savingNotesHandle, options = {}) {
-    if (!targetDb) throw new Error("Load a workspace before syncing implemented savings.");
-    if (!savingNotesHandle) throw new Error("Configure the Implemented Savings Notes folder first.");
-    const requestPermission = options.requestPermission !== false;
-    const granted = requestPermission
-      ? await ensurePermission(savingNotesHandle, "readwrite")
-      : (await permissionState(savingNotesHandle, "readwrite")) === "granted";
-    setFolderStatuses((prev) => ({ ...prev, savingNotes: granted ? "granted" : "denied" }));
-    if (!granted) throw new Error("Implemented Savings Notes folder permission was not granted.");
-
-    const propertiesNow = getProperties(targetDb);
-    const ecmsNow = getEcms(targetDb);
-    const savingsNow = getImplementedSavings(targetDb);
-    for (const saving of savingsNow) {
-      const ecm = ecmsNow.find((item) => item.id === saving.ecm_id);
-      const property = propertiesNow.find((item) => item.id === saving.property_id);
-      const filename = saving.obsidian_filename || savingFilename({ ...saving, ...ecm });
-      await writeTextIntoFolder(savingNotesHandle, filename, buildSavingMarkdown(saving, ecm, property));
-      if (saving.obsidian_filename !== filename) setSavingObsidianFilename(targetDb, saving.id, filename);
-    }
-    return { count: savingsNow.length };
-  }
-
   async function saveEcm(event) {
     event.preventDefault();
     if (!ready) return;
@@ -1437,7 +1369,7 @@ export default function App() {
         </div>
         {demoMode ? (
           <div className="sample-banner">
-            <strong>Sample data mode</strong>
+            <strong>Sample data loaded</strong>
             <span>Changes stay in memory only and reset on refresh. Obsidian folders are not read or written.</span>
           </div>
         ) : null}

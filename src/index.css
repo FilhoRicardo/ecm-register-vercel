@@ -1817,3 +1817,13 @@ main table td {
 .sample-banner span {
   color: #92400e;
 }
+
+/* Specificity follow-up to the density pass: .main-dashboard .hero outranked
+   the compact rules above. */
+.main-dashboard .hero h2 {
+  font-size: 17px;
+}
+.main-dashboard .hero {
+  padding: 8px 14px;
+  margin-bottom: 10px;
+}

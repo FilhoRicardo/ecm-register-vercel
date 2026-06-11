@@ -1827,3 +1827,22 @@ main table td {
   padding: 8px 14px;
   margin-bottom: 10px;
 }
+
+/* Weight calibration: the legacy rules ask for font-weight 900, which
+   Schibsted Grotesk never loads (max 800) — the browser synthesizes a
+   faux-black that smudges at small sizes. Cap micro-text at 600 and
+   interactive/heading text at 700. */
+.field label,
+.kpi .label,
+.label,
+.pill,
+.tracker-check,
+th {
+  font-weight: 600;
+}
+.btn,
+.kpi .value,
+.hero h2,
+h1, h2, h3 {
+  font-weight: 700;
+}

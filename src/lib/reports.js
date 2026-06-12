@@ -98,10 +98,13 @@ export async function downloadExcelRegister(db, property = null) {
   const properties = getProperties(db);
   const propertyLookup = Object.fromEntries(properties.map((item) => [Number(item.id), item]));
   const ecms = getEcms(db, propertyId);
+  const propertyEnergyValues = new Map();
+  const { annualEnergyTotalsByYear } = await import("./crrem.js");
 
   for (const ecm of ecms) {
     const prop = propertyLookup[Number(ecm.property_id)];
     if (!prop) continue;
+    const energyValues = excelRegisterEnergyValues(db, prop.id, propertyEnergyValues, annualEnergyTotalsByYear);
     worksheet.addRow([
       ecm.ref || "",
       propertyLabelForExport(prop),
@@ -109,10 +112,7 @@ export async function downloadExcelRegister(db, property = null) {
       propertyCodeFromNotes(prop.notes),
       "",
       numberOrNull(prop.total_floor_area),
-      "-",
-      "-",
-      "-",
-      "-",
+      ...energyValues,
       prop.name || "",
       ecm.title || "",
       ecm.utility_type || "",
@@ -673,6 +673,9 @@ function styleExcelRegister(worksheet) {
       if ([2, 3, 4, 5, 6].includes(colNumber)) cell.fill = solidFill(rowGrey);
     });
     worksheet.getCell(rowNumber, 6).numFmt = '#,##0 "m2"';
+    for (let colNumber = 7; colNumber <= 10; colNumber += 1) {
+      worksheet.getCell(rowNumber, colNumber).numFmt = '#,##0 "kWh/a"';
+    }
     worksheet.getCell(rowNumber, 15).numFmt = '#,##0 "EUR"';
     worksheet.getCell(rowNumber, 16).numFmt = '#,##0.00 "EUR"';
     worksheet.getCell(rowNumber, 17).numFmt = '#,##0 "kWh/a"';
@@ -891,6 +894,27 @@ function formatPdfFactor(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return "";
   return n.toFixed(4);
+}
+
+// Year 0 = first complete calendar year; Year 1/2/3 = the consecutive
+// calendar years after it. A year is "-" unless that exact year is complete,
+// so a gap in the data never silently relabels a later year's figure.
+export function registerEnergyYearValues(annualTotals) {
+  const baseYear = Object.keys(annualTotals).map(Number).sort((a, b) => a - b)[0];
+  if (baseYear === undefined) return ["-", "-", "-", "-"];
+  return [0, 1, 2, 3].map((offset) => {
+    const total = annualTotals[baseYear + offset];
+    return total === undefined ? "-" : Math.round(total);
+  });
+}
+
+function excelRegisterEnergyValues(db, propertyId, cache, annualEnergyTotalsByYear) {
+  const key = Number(propertyId);
+  if (!cache.has(key)) {
+    const annualTotals = annualEnergyTotalsByYear(getMonthlyUsage(db, key), key);
+    cache.set(key, registerEnergyYearValues(annualTotals));
+  }
+  return cache.get(key);
 }
 
 class SimplePdf {

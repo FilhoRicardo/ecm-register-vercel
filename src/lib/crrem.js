@@ -47,6 +47,20 @@ export function getCrremDataAvailability(monthlyUsage, propertyId) {
   };
 }
 
+export function annualEnergyTotalsByYear(monthlyUsage, propertyId) {
+  const annual = annualUsageByYear(monthlyUsage, propertyId);
+  return Object.fromEntries(
+    Object.keys(annual)
+      .map(Number)
+      .filter((year) => annual[year].months.size === 12)
+      .sort((a, b) => a - b)
+      .map((year) => {
+        const totals = annual[year].totals;
+        return [year, Number(totals.electricity_kwh || 0) + Number(totals.heating_kwh || 0) + Number(totals.cooling_kwh || 0)];
+      })
+  );
+}
+
 export function buildCrremAnalysis({ property, monthlyUsage, mode = "first_complete_year", reportingYear, rollingEndMonth }) {
   if (!property) return { ok: false, error: "Select a property." };
   const area = Number(property.total_floor_area || 0);
